@@ -1,0 +1,13 @@
+[package]
+name = "rustyalias"
+version = "1.0.0"
+edition = "2021"
+readme = "README.md"
+rust-version = "1.79.0"
+homepage = "https://stenstromen.se"
+repository = "https://github.com/stenstromen/rustyalias"
+description = "Wildcard DNS for any IP Address"
+
+[dependencies]
+log = "0.4"
+env_logger = "0.10"
