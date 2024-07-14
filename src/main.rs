@@ -13,11 +13,12 @@ fn main() -> IoResult<()> {
     let glue_ip: Ipv4Addr = glue_ip.parse().expect("Invalid GLUE_IP");
 
     let socket: UdpSocket = UdpSocket::bind("0.0.0.0:5053")?;
-    let mut buf: [u8; 512] = [0; 512];
+    let mut buf: [u8; 512];
 
     println!("RustyAlias Server Started on Port 5053/udp");
 
     loop {
+        buf = [0; 512];  // Reinitialize buffer
         let (amt, src) = socket.recv_from(&mut buf)?;
         debug!("Received query from {}: {:?}", src, &buf[..amt]);
         handle_query(&buf[..amt], &socket, src, &glue_name, glue_ip)?;
@@ -134,23 +135,63 @@ fn parse_hexadecimal_ip(s: &str) -> Result<Ipv4Addr, ()> {
     Ok(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
 }
 
-fn build_response(query: &[u8], ip: Ipv4Addr) -> Vec<u8> {
+fn build_response(query: &[u8], glue: Option<(&str, Ipv4Addr)>, ip: Option<Ipv4Addr>) -> Vec<u8> {
     let mut response: Vec<u8> = Vec::with_capacity(512);
 
-    response.extend(&query[0..2]);
-    response.extend(&[0x81, 0x80]);
-    response.extend(&query[4..6]);
-    response.extend(&[0x00, 0x01]);
-    response.extend(&[0x00, 0x00, 0x00, 0x00]);
-    let question_end = 12 + query[12..].iter().position(|&x| x == 0).unwrap() + 5;
-    response.extend(&query[12..question_end]);
+    response.extend(&query[0..2]); // ID
+    response.extend(&[0x81, 0x80]); // Flags
+    response.extend(&query[4..6]); // QDCOUNT
 
-    response.extend(&[0xC0, 0x0C]);
-    response.extend(&[0x00, 0x01]);
-    response.extend(&[0x00, 0x01]);
-    response.extend(&[0x00, 0x00, 0x00, 0x3C]);
-    response.extend(&[0x00, 0x04]);
-    response.extend(&ip.octets());
+    if let Some((glue_name, glue_ip)) = glue {
+        response.extend(&[0x00, 0x01]); // ANCOUNT
+        response.extend(&[0x00, 0x00]); // NSCOUNT
+        response.extend(&[0x00, 0x01]); // ARCOUNT
+
+        let question_end = 12 + query[12..].iter().position(|&x| x == 0).unwrap() + 5;
+        response.extend(&query[12..question_end]); // Original question
+
+        // Answer section (NS record)
+        response.extend(&[0xC0, 0x0C]); // Pointer to the domain name in the question
+        response.extend(&[0x00, 0x02]); // Type NS
+        response.extend(&[0x00, 0x01]); // Class IN
+        response.extend(&[0x00, 0x00, 0x00, 0x3C]); // TTL
+        let mut ns_name_encoded = Vec::new();
+        for part in glue_name.split('.') {
+            ns_name_encoded.push(part.len() as u8);
+            ns_name_encoded.extend(part.as_bytes());
+        }
+        ns_name_encoded.push(0); // Null terminator for the domain name
+        response.extend(&(ns_name_encoded.len() as u16).to_be_bytes()); // RDLENGTH
+        response.extend(ns_name_encoded); // RDATA
+
+        // Additional section (A record for the glue name)
+        let glue_name_parts: Vec<&str> = glue_name.split('.').collect();
+        for part in glue_name_parts {
+            response.push(part.len() as u8);
+            response.extend(part.as_bytes());
+        }
+        response.push(0); // Null terminator for the glue name
+        response.extend(&[0x00, 0x01]); // Type A
+        response.extend(&[0x00, 0x01]); // Class IN
+        response.extend(&[0x00, 0x00, 0x00, 0x3C]); // TTL
+        response.extend(&[0x00, 0x04]); // RDLENGTH
+        response.extend(&glue_ip.octets()); // RDATA
+    } else if let Some(ip) = ip {
+        response.extend(&[0x00, 0x01]); // ANCOUNT
+        response.extend(&[0x00, 0x00]); // NSCOUNT
+        response.extend(&[0x00, 0x00]); // ARCOUNT
+
+        let question_end = 12 + query[12..].iter().position(|&x| x == 0).unwrap() + 5;
+        response.extend(&query[12..question_end]); // Original question
+
+        // Answer section (A record)
+        response.extend(&[0xC0, 0x0C]); // Pointer to the domain name in the question
+        response.extend(&[0x00, 0x01]); // Type A
+        response.extend(&[0x00, 0x01]); // Class IN
+        response.extend(&[0x00, 0x00, 0x00, 0x3C]); // TTL
+        response.extend(&[0x00, 0x04]); // RDLENGTH
+        response.extend(&ip.octets()); // RDATA
+    }
 
     debug!("Built response: {:?}", response);
     response
@@ -162,11 +203,11 @@ fn handle_query(query: &[u8], socket: &UdpSocket, src: SocketAddr, glue_name: &s
         debug!("GLUE_NAME: {}", glue_name);
         if domain.eq_ignore_ascii_case(glue_name) {
             info!("Client [{}] resolved [{}] to [{}]", src, domain, glue_ip);
-            let response: Vec<u8> = build_response(query, glue_ip);
+            let response: Vec<u8> = build_response(query, Some((glue_name, glue_ip)), None);
             socket.send_to(&response, src)?;
         } else if let Some(ip) = interpret_ip(&domain) {
             info!("Client [{}] resolved [{}] to [{}]", src, domain, ip);
-            let response: Vec<u8> = build_response(query, ip);
+            let response: Vec<u8> = build_response(query, None, Some(ip));
             socket.send_to(&response, src)?;
         } else {
             info!("Client [{}] failed to resolve [{}]", src, domain);
