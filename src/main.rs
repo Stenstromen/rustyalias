@@ -1,22 +1,26 @@
-use env_logger::init;
-use log::{info, debug};
-use::core::result::Result;
-use std::io::Result as IoResult;
-use std::str::{FromStr,from_utf8};
 use std::net::{UdpSocket, Ipv4Addr, SocketAddr};
+use std::str::{from_utf8, FromStr};
+use std::io::Result as IoResult;
+use log::{info, debug};
+use env_logger::init;
+use std::env;
 
 fn main() -> IoResult<()> {
     init();
 
+    let glue_name = env::var("GLUE_NAME").unwrap_or_else(|_| "ns.example.com".to_string());
+    let glue_ip = env::var("GLUE_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let glue_ip: Ipv4Addr = glue_ip.parse().expect("Invalid GLUE_IP");
+
     let socket: UdpSocket = UdpSocket::bind("0.0.0.0:5053")?;
     let mut buf: [u8; 512] = [0; 512];
 
-    print!("RustyAlias Server Started on Port 5053/udp\n");
+    println!("RustyAlias Server Started on Port 5053/udp");
 
     loop {
         let (amt, src) = socket.recv_from(&mut buf)?;
         debug!("Received query from {}: {:?}", src, &buf[..amt]);
-        handle_query(&buf[..amt], &socket, src)?;
+        handle_query(&buf[..amt], &socket, src, &glue_name, glue_ip)?;
     }
 }
 
@@ -48,6 +52,11 @@ fn parse_query(query: &[u8]) -> Option<String> {
         }
         domain.push_str(from_utf8(&query[pos..pos + len]).ok()?);
         pos += len;
+    }
+
+    if domain.is_empty() {
+        debug!("Domain name parsed as empty.");
+        return None;
     }
 
     Some(domain)
@@ -147,10 +156,15 @@ fn build_response(query: &[u8], ip: Ipv4Addr) -> Vec<u8> {
     response
 }
 
-fn handle_query(query: &[u8], socket: &UdpSocket, src: SocketAddr) -> IoResult<()> {
+fn handle_query(query: &[u8], socket: &UdpSocket, src: SocketAddr, glue_name: &str, glue_ip: Ipv4Addr) -> IoResult<()> {
     if let Some(domain) = parse_query(query) {
         debug!("Parsed domain: {}", domain);
-        if let Some(ip) = interpret_ip(&domain) {
+        debug!("GLUE_NAME: {}", glue_name);
+        if domain.eq_ignore_ascii_case(glue_name) {
+            info!("Client [{}] resolved [{}] to [{}]", src, domain, glue_ip);
+            let response: Vec<u8> = build_response(query, glue_ip);
+            socket.send_to(&response, src)?;
+        } else if let Some(ip) = interpret_ip(&domain) {
             info!("Client [{}] resolved [{}] to [{}]", src, domain, ip);
             let response: Vec<u8> = build_response(query, ip);
             socket.send_to(&response, src)?;
