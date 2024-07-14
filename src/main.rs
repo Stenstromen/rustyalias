@@ -139,12 +139,12 @@ fn build_response(query: &[u8], glue: Option<(&str, Ipv4Addr)>, ip: Option<Ipv4A
     let mut response: Vec<u8> = Vec::with_capacity(512);
 
     response.extend(&query[0..2]); // ID
-    response.extend(&[0x81, 0x80]); // Flags
+    response.extend(&[0x85, 0x80]); // Flags with AA bit set
     response.extend(&query[4..6]); // QDCOUNT
 
     if let Some((glue_name, glue_ip)) = glue {
         response.extend(&[0x00, 0x01]); // ANCOUNT
-        response.extend(&[0x00, 0x00]); // NSCOUNT
+        response.extend(&[0x00, 0x01]); // NSCOUNT
         response.extend(&[0x00, 0x01]); // ARCOUNT
 
         let question_end = 12 + query[12..].iter().position(|&x| x == 0).unwrap() + 5;
