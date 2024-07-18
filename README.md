@@ -1,5 +1,7 @@
 # RustyAlias
 
+![Logo](rustyalias.webp)
+
 (_Shameless nip.io ripoff written in Rust_)
 
 Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to a hostname using the following formats (dot, dash or hex):
