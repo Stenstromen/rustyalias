@@ -1,4 +1,4 @@
-use std::net::{ UdpSocket, Ipv4Addr, SocketAddr };
+use std::net::{ UdpSocket, Ipv4Addr, Ipv6Addr, SocketAddr };
 use std::str::{ from_utf8, FromStr };
 use std::io::Result as IoResult;
 use log::{ info, debug };
@@ -106,35 +106,54 @@ fn parse_query(query: &[u8]) -> Option<String> {
     Some(domain)
 }
 
-fn interpret_ip(domain: &str) -> Option<Ipv4Addr> {
+fn interpret_ip(domain: &str) -> Option<(Option<Ipv4Addr>, Option<Ipv6Addr>)> {
     let parts: Vec<&str> = domain.split('.').collect();
     debug!("Domain parts: {:?}", parts);
 
+    // Try IPv4 first
     if parts.len() >= 4 {
         for i in 0..=parts.len() - 4 {
             let potential_ip: String = parts[i..i + 4].join(".");
             if let Ok(ip) = Ipv4Addr::from_str(&potential_ip) {
-                debug!("Parsed dotted decimal IP: {}", ip);
-                return Some(ip);
+                debug!("Parsed dotted decimal IPv4: {}", ip);
+                return Some((Some(ip), None));
             }
         }
     }
 
+    // Check for IPv6 in hyphenated format
+    for part in &parts {
+        if let Some(ipv6) = parse_hyphenated_ipv6(part) {
+            debug!("Parsed hyphenated IPv6: {}", ipv6);
+            return Some((None, Some(ipv6)));
+        }
+    }
+
+    // Existing IPv4 checks
     for part in &parts {
         if part.len() == 8 {
             if let Ok(ip) = parse_hexadecimal_ip(part) {
-                debug!("Parsed hexadecimal IP: {}", ip);
-                return Some(ip);
+                debug!("Parsed hexadecimal IPv4: {}", ip);
+                return Some((Some(ip), None));
             }
         }
         if let Some(ip) = parse_hyphenated_ip(part) {
-            debug!("Parsed hyphenated IP: {}", ip);
-            return Some(ip);
+            debug!("Parsed hyphenated IPv4: {}", ip);
+            return Some((Some(ip), None));
         }
     }
 
     debug!("Failed to interpret any parts as IP from domain: {}", domain);
     None
+}
+
+fn parse_hyphenated_ipv6(s: &str) -> Option<Ipv6Addr> {
+    // Replace double hyphens with a marker for ::
+    let s = s.replace("--", "::");
+    // Replace single hyphens with colons
+    let s = s.replace('-', ":");
+    
+    Ipv6Addr::from_str(&s).ok()
 }
 
 fn parse_hyphenated_ip(s: &str) -> Option<Ipv4Addr> {
@@ -178,7 +197,11 @@ fn parse_hexadecimal_ip(s: &str) -> Result<Ipv4Addr, ()> {
     Ok(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
 }
 
-fn build_response(query: &[u8], glue: Option<(&str, Ipv4Addr)>, ip: Option<Ipv4Addr>) -> Vec<u8> {
+fn build_response(
+    query: &[u8], 
+    glue: Option<(&str, Ipv4Addr)>, 
+    ip: Option<(Option<Ipv4Addr>, Option<Ipv6Addr>)>
+) -> Vec<u8> {
     let mut response: Vec<u8> = Vec::with_capacity(512);
 
     response.extend(&query[0..2]); // ID
@@ -210,21 +233,34 @@ fn build_response(query: &[u8], glue: Option<(&str, Ipv4Addr)>, ip: Option<Ipv4A
         response.extend(&[0x00, 0x00, 0x00, 0x3C]); // TTL
         response.extend(&[0x00, 0x04]); // RDLENGTH
         response.extend(&glue_ip.octets()); // RDATA
-    } else if let Some(ip) = ip {
-        response.extend(&[0x00, 0x01]); // ANCOUNT
+    } else if let Some((ipv4, ipv6)) = ip {
+        let answer_count = ipv4.is_some() as u16 + ipv6.is_some() as u16;
+        response.extend(&answer_count.to_be_bytes()); // ANCOUNT
         response.extend(&[0x00, 0x00]); // NSCOUNT
         response.extend(&[0x00, 0x00]); // ARCOUNT
 
         let question_end = 12 + query[12..].iter().position(|&x| x == 0).unwrap() + 5;
         response.extend(&query[12..question_end]); // Original question
 
-        // Answer section (A record)
-        response.extend(&[0xC0, 0x0C]); // Pointer to the domain name in the question
-        response.extend(&[0x00, 0x01]); // Type A
-        response.extend(&[0x00, 0x01]); // Class IN
-        response.extend(&[0x00, 0x00, 0x00, 0x3C]); // TTL
-        response.extend(&[0x00, 0x04]); // RDLENGTH
-        response.extend(&ip.octets()); // RDATA
+        // Add IPv4 record if present
+        if let Some(ipv4_addr) = ipv4 {
+            response.extend(&[0xC0, 0x0C]); // Pointer to the domain name
+            response.extend(&[0x00, 0x01]); // Type A
+            response.extend(&[0x00, 0x01]); // Class IN
+            response.extend(&[0x00, 0x00, 0x00, 0x3C]); // TTL
+            response.extend(&[0x00, 0x04]); // RDLENGTH
+            response.extend(&ipv4_addr.octets()); // RDATA
+        }
+
+        // Add IPv6 record if present
+        if let Some(ipv6_addr) = ipv6 {
+            response.extend(&[0xC0, 0x0C]); // Pointer to the domain name
+            response.extend(&[0x00, 0x1C]); // Type AAAA
+            response.extend(&[0x00, 0x01]); // Class IN
+            response.extend(&[0x00, 0x00, 0x00, 0x3C]); // TTL
+            response.extend(&[0x00, 0x10]); // RDLENGTH
+            response.extend(&ipv6_addr.octets()); // RDATA
+        }
     }
 
     debug!("Built response: {:?}", response);
@@ -301,11 +337,11 @@ fn handle_query(
         debug!("GLUE_NAME: {}", glue_name);
         if domain.eq_ignore_ascii_case(glue_name) {
             info!("Client [{}] resolved [{}] to [{}]", src, domain, glue_ip);
-            let response: Vec<u8> = build_response(query, Some((glue_name, glue_ip)), None);
+            let response = build_response(query, Some((glue_name, glue_ip)), None);
             socket.send_to(&response, src)?;
         } else if let Some(ip) = interpret_ip(&domain) {
-            info!("Client [{}] resolved [{}] to [{}]", src, domain, ip);
-            let response: Vec<u8> = build_response(query, None, Some(ip));
+            info!("Client [{}] resolved [{}] to [{:?}]", src, domain, ip);
+            let response = build_response(query, None, Some(ip));
             socket.send_to(&response, src)?;
         } else if domain.ends_with(glue_name) {
             // Respond with SOA for intermediate subdomains
