@@ -11,6 +11,7 @@ Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to 
 - **`10.0.0.1.example.com`** maps to **10.0.0.1**
 - **`192-168-1-250.example.com`** maps to **192.168.1.250**
 - **`a000803.example.com`** maps to **10.0.8.3**
+- **`2a04-4e42-200--201.example.com`** maps to **2a04:4e42:200::201**
 
 **With a name:**
 
@@ -20,6 +21,7 @@ Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to 
 - **`customer1.app.10.0.0.1.example.com`** maps to **10.0.0.1**
 - **`customer2-app-127-0-0-1.example.com`** maps to **127.0.0.1**
 - **`customer3-app-7f000101.example.com`** maps to **127.0.1.1**
+- **`customer4.2a04-4e42-200--201.example.com`** maps to **2a04:4e42:200::201**
 
 ## Podman (Docker)
 
