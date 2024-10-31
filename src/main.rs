@@ -42,7 +42,7 @@ fn main() -> IoResult<()> {
         .parse()
         .expect("Invalid MINIMUM");
 
-    let socket: UdpSocket = UdpSocket::bind("0.0.0.0:5053")?;
+    let socket = UdpSocket::bind("[::]:5053")?;
     let mut buf: [u8; 512];
 
     println!("RustyAlias Server Started on Port 5053/udp");
