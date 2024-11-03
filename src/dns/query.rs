@@ -1,5 +1,5 @@
 use super::ip_parser::interpret_ip;
-use super::response::{build_response, build_soa_response};
+use super::response::{build_response, build_soa_response, SoaParams};
 use crate::config::Config;
 use log::{debug, info};
 use std::io::Result as IoResult;
@@ -26,29 +26,29 @@ pub fn handle_query(
             socket.send_to(&response, src)?;
         } else if domain.ends_with(&config.glue_name) {
             info!("Client [{}] query for intermediate subdomain [{}] - returning SOA", src, domain);
-            let response = build_soa_response(
-                query,
-                &config.soa_name,
-                &config.hostmaster,
-                config.serial,
-                config.refresh,
-                config.retry,
-                config.expire,
-                config.minimum,
-            );
+            let soa_params = SoaParams {
+                soa_name: &config.soa_name,
+                hostmaster: &config.hostmaster,
+                serial: config.serial,
+                refresh: config.refresh,
+                retry: config.retry,
+                expire: config.expire,
+                minimum: config.minimum,
+            };
+            let response = build_soa_response(query, &soa_params);
             socket.send_to(&response, src)?;
         } else {
             info!("Client [{}] failed to resolve [{}]", src, domain);
-            let response = build_soa_response(
-                query,
-                &config.soa_name,
-                &config.hostmaster,
-                config.serial,
-                config.refresh,
-                config.retry,
-                config.expire,
-                config.minimum,
-            );
+            let soa_params = SoaParams {
+                soa_name: &config.soa_name,
+                hostmaster: &config.hostmaster,
+                serial: config.serial,
+                refresh: config.refresh,
+                retry: config.retry,
+                expire: config.expire,
+                minimum: config.minimum,
+            };
+            let response = build_soa_response(query, &soa_params);
             socket.send_to(&response, src)?;
         }
     } else {

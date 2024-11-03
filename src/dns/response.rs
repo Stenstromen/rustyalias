@@ -71,15 +71,19 @@ pub fn build_response(
     response
 }
 
+pub struct SoaParams<'a> {
+    pub soa_name: &'a str,
+    pub hostmaster: &'a str,
+    pub serial: u32,
+    pub refresh: u32,
+    pub retry: u32,
+    pub expire: u32,
+    pub minimum: u32,
+}
+
 pub fn build_soa_response(
     query: &[u8],
-    soa_name: &str,
-    hostmaster: &str,
-    serial: u32,
-    refresh: u32,
-    retry: u32,
-    expire: u32,
-    minimum: u32,
+    params: &SoaParams,
 ) -> Vec<u8> {
     let mut response: Vec<u8> = Vec::with_capacity(512);
     response.extend(&query[0..2]); // Transaction ID
@@ -99,13 +103,13 @@ pub fn build_soa_response(
     response.extend(&[0x00, 0x00, 0x0e, 0x10]); // TTL: 3600 seconds
     
     let mut rdata = Vec::new();
-    rdata.extend(encode_domain_name(soa_name));
-    rdata.extend(encode_domain_name(hostmaster));
-    rdata.extend(&serial.to_be_bytes());
-    rdata.extend(&refresh.to_be_bytes());
-    rdata.extend(&retry.to_be_bytes());
-    rdata.extend(&expire.to_be_bytes());
-    rdata.extend(&minimum.to_be_bytes());
+    rdata.extend(encode_domain_name(params.soa_name));
+    rdata.extend(encode_domain_name(params.hostmaster));
+    rdata.extend(&params.serial.to_be_bytes());
+    rdata.extend(&params.refresh.to_be_bytes());
+    rdata.extend(&params.retry.to_be_bytes());
+    rdata.extend(&params.expire.to_be_bytes());
+    rdata.extend(&params.minimum.to_be_bytes());
     
     response.extend(&(rdata.len() as u16).to_be_bytes()); // RDLENGTH
     response.extend(rdata);
