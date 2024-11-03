@@ -1,12 +1,12 @@
-mod dns;
 mod config;
+mod dns;
 
-use dns::query::handle_query;
 use config::Config;
-use std::net::UdpSocket;
-use std::io::Result as IoResult;
-use log::debug;
+use dns::query::handle_query;
 use env_logger::init;
+use log::debug;
+use std::io::Result as IoResult;
+use std::net::UdpSocket;
 
 fn main() -> IoResult<()> {
     init();

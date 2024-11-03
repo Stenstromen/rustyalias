@@ -1,5 +1,5 @@
-use std::net::{Ipv4Addr, Ipv6Addr};
 use log::debug;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 pub fn build_response(
     query: &[u8],
@@ -81,10 +81,7 @@ pub struct SoaParams<'a> {
     pub minimum: u32,
 }
 
-pub fn build_soa_response(
-    query: &[u8],
-    params: &SoaParams,
-) -> Vec<u8> {
+pub fn build_soa_response(query: &[u8], params: &SoaParams) -> Vec<u8> {
     let mut response: Vec<u8> = Vec::with_capacity(512);
     response.extend(&query[0..2]); // Transaction ID
     response.extend(&[0x81, 0x80]); // Flags: response, authoritative
