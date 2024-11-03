@@ -17,7 +17,10 @@ pub fn handle_query(
         debug!("GLUE_NAME: {}", config.glue_name);
         
         if domain.eq_ignore_ascii_case(&config.glue_name) {
-            info!("Client [{}] resolved [{}] to [{}]", src, domain, config.glue_ip);
+            info!(
+                "Client [{}] resolved [{}] to [{}]",
+                src, domain, config.glue_ip
+            );
             let response = build_response(query, Some((&config.glue_name, config.glue_ip)), None);
             socket.send_to(&response, src)?;
         } else if let Some(ip) = interpret_ip(&domain) {
@@ -25,7 +28,10 @@ pub fn handle_query(
             let response = build_response(query, None, Some(ip));
             socket.send_to(&response, src)?;
         } else if domain.ends_with(&config.glue_name) {
-            info!("Client [{}] query for intermediate subdomain [{}] - returning SOA", src, domain);
+            info!(
+                "Client [{}] query for intermediate subdomain [{}] - returning SOA",
+                src, domain
+            );
             let soa_params = SoaParams {
                 soa_name: &config.soa_name,
                 hostmaster: &config.hostmaster,
