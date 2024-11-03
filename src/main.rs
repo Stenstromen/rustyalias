@@ -11,8 +11,10 @@ use std::net::UdpSocket;
 fn main() -> IoResult<()> {
     init();
     
+
     let config = Config::from_env();
     let socket = UdpSocket::bind("[::]:5053")?;
+    
     
     println!("RustyAlias Server Started on Port 5053/udp");
 

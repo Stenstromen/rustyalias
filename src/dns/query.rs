@@ -13,6 +13,7 @@ pub fn handle_query(
     config: &Config,
 ) -> IoResult<()> {
     if let Some(domain) = parse_query(query) {
+        
         debug!("Parsed domain: {}", domain);
         debug!("GLUE_NAME: {}", config.glue_name);
         

@@ -98,6 +98,7 @@ pub fn build_soa_response(query: &[u8], params: &SoaParams) -> Vec<u8> {
     response.extend(&[0x00, 0x06]); // Type: SOA
     response.extend(&[0x00, 0x01]); // Class: IN
     response.extend(&[0x00, 0x00, 0x0e, 0x10]); // TTL: 3600 seconds
+
     
     let mut rdata = Vec::new();
     rdata.extend(encode_domain_name(params.soa_name));
@@ -107,6 +108,7 @@ pub fn build_soa_response(query: &[u8], params: &SoaParams) -> Vec<u8> {
     rdata.extend(&params.retry.to_be_bytes());
     rdata.extend(&params.expire.to_be_bytes());
     rdata.extend(&params.minimum.to_be_bytes());
+
     
     response.extend(&(rdata.len() as u16).to_be_bytes()); // RDLENGTH
     response.extend(rdata);

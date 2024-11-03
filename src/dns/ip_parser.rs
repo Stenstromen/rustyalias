@@ -1,5 +1,5 @@
 use log::debug;
-use std::net::{ Ipv4Addr, Ipv6Addr };
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
 pub fn interpret_ip(domain: &str) -> Option<(Option<Ipv4Addr>, Option<Ipv6Addr>)> {
@@ -150,7 +150,10 @@ mod tests {
     fn test_ipv6_notation() {
         let cases = [
             ("2a04-4e42-200--201.example.com", "2a04:4e42:200::201"),
-            ("customer4.2a04-4e42-200--201.example.com", "2a04:4e42:200::201"),
+            (
+                "customer4.2a04-4e42-200--201.example.com",
+                "2a04:4e42:200::201",
+            ),
         ];
 
         for (input, expected) in cases {
