@@ -46,4 +46,4 @@ impl Config {
                 .expect("Invalid MINIMUM"),
         }
     }
-} 
+}
