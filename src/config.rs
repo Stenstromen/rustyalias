@@ -1,6 +1,7 @@
 use std::env;
 use std::net::Ipv4Addr;
 
+#[derive(Clone)]
 pub struct Config {
     pub glue_name: String,
     pub glue_ip: Ipv4Addr,
