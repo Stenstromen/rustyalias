@@ -10,4 +10,4 @@ description = "Wildcard DNS for any IP Address"
 
 [dependencies]
 log = "0.4"
-env_logger = "0.10"
+env_logger = "0.11"
