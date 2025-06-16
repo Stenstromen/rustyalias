@@ -23,6 +23,12 @@ Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to 
 - **`customer3-app-7f000101.example.com`** maps to **127.0.1.1**
 - **`customer4.2a04-4e42-200--201.example.com`** maps to **2a04:4e42:200::201**
 
+**Version TXT record:**
+
+- **`version`** returns **RustyAlias v1.6.0**
+- **`ver`** returns **RustyAlias v1.6.0**
+- **`v`** returns **RustyAlias v1.6.0**
+
 ## Podman (Docker)
 
 ```bash
