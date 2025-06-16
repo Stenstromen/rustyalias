@@ -1,6 +1,6 @@
 [package]
 name = "rustyalias"
-version = "1.5.3"
+version = "1.6.0"
 edition = "2021"
 readme = "README.md"
 rust-version = "1.79.0"
@@ -11,3 +11,4 @@ description = "Wildcard DNS for any IP Address"
 [dependencies]
 log = "0.4"
 env_logger = "0.11"
+toml = "0.8"

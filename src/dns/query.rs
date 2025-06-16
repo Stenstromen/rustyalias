@@ -1,5 +1,5 @@
 use super::ip_parser::interpret_ip;
-use super::response::{build_response, build_soa_response, SoaParams};
+use super::response::{build_response, build_soa_response, build_txt_response, SoaParams};
 use crate::config::Config;
 use log::{debug, info};
 use std::io::Result as IoResult;
@@ -22,6 +22,14 @@ pub fn handle_query(
                 src, domain, config.glue_ip
             );
             let response = build_response(query, Some((&config.glue_name, config.glue_ip)), None);
+            socket.send_to(&response, src)?;
+        } else if domain.eq_ignore_ascii_case("version")
+            || domain.eq_ignore_ascii_case("ver")
+            || domain.eq_ignore_ascii_case("v")
+        {
+            info!("Client [{}] requested version TXT record", src);
+            let nameandversion = format!("RustyAlias v{}", config.version);
+            let response = build_txt_response(query, &nameandversion);
             socket.send_to(&response, src)?;
         } else if let Some(ip) = interpret_ip(&domain) {
             info!("Client [{}] resolved [{}] to [{:?}]", src, domain, ip);
@@ -112,6 +120,9 @@ pub fn handle_query_internal(query: &[u8], src: SocketAddr, config: &Config) -> 
                 src, domain, config.glue_ip
             );
             build_response(query, Some((&config.glue_name, config.glue_ip)), None)
+        } else if domain.eq_ignore_ascii_case("version") || domain.eq_ignore_ascii_case("ver") {
+            info!("Client [{}] requested version TXT record", src);
+            build_txt_response(query, &config.version)
         } else if let Some(ip) = interpret_ip(&domain) {
             info!("Client [{}] resolved [{}] to [{:?}]", src, domain, ip);
             build_response(query, None, Some(ip))

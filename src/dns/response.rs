@@ -124,3 +124,31 @@ pub fn encode_domain_name(name: &str) -> Vec<u8> {
     encoded.push(0); // End of the domain name
     encoded
 }
+
+pub fn build_txt_response(query: &[u8], txt_data: &str) -> Vec<u8> {
+    let mut response: Vec<u8> = Vec::with_capacity(512);
+    response.extend(&query[0..2]); // ID
+    response.extend(&[0x81, 0x80]); // Flags: response, authoritative
+    response.extend(&query[4..6]); // QDCOUNT
+    response.extend(&[0x00, 0x01]); // ANCOUNT
+    response.extend(&[0x00, 0x00]); // NSCOUNT
+    response.extend(&[0x00, 0x00]); // ARCOUNT
+
+    let question_end = 12 + query[12..].iter().position(|&x| x == 0).unwrap() + 5;
+    response.extend(&query[12..question_end]); // Original question
+
+    // TXT Record
+    response.extend(&[0xC0, 0x0C]); // Pointer to the domain name
+    response.extend(&[0x00, 0x10]); // Type TXT
+    response.extend(&[0x00, 0x01]); // Class IN
+    response.extend(&[0x00, 0x00, 0x00, 0x3C]); // TTL: 60 seconds
+
+    // TXT data format: <length><string>
+    let txt_bytes = txt_data.as_bytes();
+    response.extend(&(txt_bytes.len() as u16 + 1).to_be_bytes()); // RDLENGTH
+    response.push(txt_bytes.len() as u8); // Length of the string
+    response.extend(txt_bytes); // The actual string
+
+    debug!("Built TXT response: {:?}", response);
+    response
+}
