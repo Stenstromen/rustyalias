@@ -33,3 +33,44 @@ jobs:
             ghcr.io/stenstromen/${{ env.IMAGE_NAME }}:latest
             ghcr.io/stenstromen/${{ env.IMAGE_NAME }}:${{ github.event.release.tag_name }}
           platforms: linux/amd64
+
+  flux-update:
+    needs: [build]
+    runs-on: ubuntu-latest
+    env:
+      VERSIONTAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Checkout flux repository
+        uses: actions/checkout@v4
+        with:
+          repository: stenstromen/flux
+          token: ${{ secrets.KUBE_GITHUB_TOKEN }}
+          path: flux-repo
+          fetch-depth: 0
+
+      - name: Fetch repository content
+        run: |
+          cd flux-repo
+          git fetch origin
+          git checkout main
+
+      - name: Update Deployment image tag
+        run: |
+          DEPLOYMENT_FILE="flux-repo/apps/stinky/rustyalias/deployment.yaml"
+          OLD_IMAGE=$(grep "image:" "$DEPLOYMENT_FILE" | awk '{print $2}')
+          NEW_IMAGE="ghcr.io/stenstromen/rustyalias:$VERSIONTAG"
+
+          # Update the image tag
+          sed -i "s|image:.*|image: $NEW_IMAGE|" "$DEPLOYMENT_FILE"
+
+          # Create commit message
+          echo "Update image: $OLD_IMAGE -> $NEW_IMAGE" > commit_message.txt
+
+      - name: Commit and Push Flux Deployment Update
+        run: |
+          cd flux-repo
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add apps/stinky/rustyalias/deployment.yaml
+          git commit -F ../commit_message.txt
+          git push
