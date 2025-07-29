@@ -35,7 +35,7 @@ jobs:
           platforms: linux/amd64
 
   flux-update:
-    needs: [build]
+    needs: [build-and-push]
     runs-on: ubuntu-latest
     env:
       VERSIONTAG: ${{ github.event.release.tag_name }}
