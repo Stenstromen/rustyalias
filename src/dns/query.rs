@@ -13,7 +13,7 @@ pub fn handle_query(
     config: &Config,
 ) -> IoResult<()> {
     if let Some(domain) = parse_query(query) {
-        debug!("Parsed domain: {}", domain);
+        debug!("Parsed domain: {domain}");
         debug!("GLUE_NAME: {}", config.glue_name);
 
         if domain.eq_ignore_ascii_case(&config.glue_name) {
@@ -27,19 +27,16 @@ pub fn handle_query(
             || domain.eq_ignore_ascii_case("ver")
             || domain.eq_ignore_ascii_case("v")
         {
-            info!("Client [{}] requested version TXT record", src);
+            info!("Client [{src}] requested version TXT record");
             let nameandversion = format!("RustyAlias v{}", config.version);
             let response = build_txt_response(query, &nameandversion);
             socket.send_to(&response, src)?;
         } else if let Some(ip) = interpret_ip(&domain) {
-            info!("Client [{}] resolved [{}] to [{:?}]", src, domain, ip);
+            info!("Client [{src}] resolved [{domain}] to [{ip:?}]");
             let response = build_response(query, None, Some(ip));
             socket.send_to(&response, src)?;
         } else if domain.ends_with(&config.glue_name) {
-            info!(
-                "Client [{}] query for intermediate subdomain [{}] - returning SOA",
-                src, domain
-            );
+            info!("Client [{src}] query for intermediate subdomain [{domain}] - returning SOA");
             let soa_params = SoaParams {
                 soa_name: &config.soa_name,
                 hostmaster: &config.hostmaster,
@@ -52,7 +49,7 @@ pub fn handle_query(
             let response = build_soa_response(query, &soa_params);
             socket.send_to(&response, src)?;
         } else {
-            info!("Client [{}] failed to resolve [{}]", src, domain);
+            info!("Client [{src}] failed to resolve [{domain}]");
             let soa_params = SoaParams {
                 soa_name: &config.soa_name,
                 hostmaster: &config.hostmaster,
@@ -66,7 +63,7 @@ pub fn handle_query(
             socket.send_to(&response, src)?;
         }
     } else {
-        debug!("Failed to parse query: {:?}", query);
+        debug!("Failed to parse query: {query:?}");
     }
     Ok(())
 }
@@ -79,7 +76,7 @@ pub fn parse_query(query: &[u8]) -> Option<String> {
 
     let qdcount: u16 = u16::from_be_bytes([query[4], query[5]]);
     if qdcount != 1 {
-        debug!("Invalid QDCOUNT: {}", qdcount);
+        debug!("Invalid QDCOUNT: {qdcount}");
         return None;
     }
 
@@ -111,7 +108,7 @@ pub fn parse_query(query: &[u8]) -> Option<String> {
 
 pub fn handle_query_internal(query: &[u8], src: SocketAddr, config: &Config) -> IoResult<Vec<u8>> {
     if let Some(domain) = parse_query(query) {
-        debug!("Parsed domain: {}", domain);
+        debug!("Parsed domain: {domain}");
         debug!("GLUE_NAME: {}", config.glue_name);
 
         let response = if domain.eq_ignore_ascii_case(&config.glue_name) {
@@ -121,13 +118,13 @@ pub fn handle_query_internal(query: &[u8], src: SocketAddr, config: &Config) -> 
             );
             build_response(query, Some((&config.glue_name, config.glue_ip)), None)
         } else if domain.eq_ignore_ascii_case("version") || domain.eq_ignore_ascii_case("ver") {
-            info!("Client [{}] requested version TXT record", src);
+            info!("Client [{src}] requested version TXT record");
             build_txt_response(query, &config.version)
         } else if let Some(ip) = interpret_ip(&domain) {
-            info!("Client [{}] resolved [{}] to [{:?}]", src, domain, ip);
+            info!("Client [{src}] resolved [{domain}] to [{ip:?}]");
             build_response(query, None, Some(ip))
         } else {
-            info!("Client [{}] failed to resolve [{}]", src, domain);
+            info!("Client [{src}] failed to resolve [{domain}]");
             let soa_params = SoaParams {
                 soa_name: &config.soa_name,
                 hostmaster: &config.hostmaster,
@@ -141,7 +138,7 @@ pub fn handle_query_internal(query: &[u8], src: SocketAddr, config: &Config) -> 
         };
         Ok(response)
     } else {
-        debug!("Failed to parse query: {:?}", query);
+        debug!("Failed to parse query: {query:?}");
         Ok(Vec::new())
     }
 }

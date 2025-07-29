@@ -4,12 +4,12 @@ use std::str::FromStr;
 
 pub fn interpret_ip(domain: &str) -> Option<(Option<Ipv4Addr>, Option<Ipv6Addr>)> {
     let parts: Vec<&str> = domain.split('.').collect();
-    debug!("Domain parts: {:?}", parts);
+    debug!("Domain parts: {parts:?}");
 
     for part in &parts {
         if part.len() == 8 {
             if let Ok(ip) = parse_hexadecimal_ip(part) {
-                debug!("Parsed hexadecimal IPv4: {}", ip);
+                debug!("Parsed hexadecimal IPv4: {ip}");
                 return Some((Some(ip), None));
             }
         }
@@ -19,7 +19,7 @@ pub fn interpret_ip(domain: &str) -> Option<(Option<Ipv4Addr>, Option<Ipv6Addr>)
         for i in 0..=parts.len() - 4 {
             let potential_ip: String = parts[i..i + 4].join(".");
             if let Ok(ip) = Ipv4Addr::from_str(&potential_ip) {
-                debug!("Parsed dotted decimal IPv4: {}", ip);
+                debug!("Parsed dotted decimal IPv4: {ip}");
                 return Some((Some(ip), None));
             }
         }
@@ -27,22 +27,19 @@ pub fn interpret_ip(domain: &str) -> Option<(Option<Ipv4Addr>, Option<Ipv6Addr>)
 
     for part in &parts {
         if let Some(ipv6) = parse_hyphenated_ipv6(part) {
-            debug!("Parsed hyphenated IPv6: {}", ipv6);
+            debug!("Parsed hyphenated IPv6: {ipv6}");
             return Some((None, Some(ipv6)));
         }
     }
 
     for part in &parts {
         if let Some(ip) = parse_hyphenated_ip(part) {
-            debug!("Parsed hyphenated IPv4: {}", ip);
+            debug!("Parsed hyphenated IPv4: {ip}");
             return Some((Some(ip), None));
         }
     }
 
-    debug!(
-        "Failed to interpret any parts as IP from domain: {}",
-        domain
-    );
+    debug!("Failed to interpret any parts as IP from domain: {domain}");
     None
 }
 
@@ -54,7 +51,7 @@ pub fn parse_hyphenated_ipv6(s: &str) -> Option<Ipv6Addr> {
 
 pub fn parse_hyphenated_ip(s: &str) -> Option<Ipv4Addr> {
     let parts: Vec<&str> = s.split('-').collect();
-    debug!("Hyphenated IP parts: {:?}", parts);
+    debug!("Hyphenated IP parts: {parts:?}");
     if parts.len() == 4 && parts.iter().all(|&p| p.parse::<u8>().is_ok()) {
         let ip_str: String = parts.join(".");
         if let Ok(ip) = Ipv4Addr::from_str(&ip_str) {
@@ -79,7 +76,7 @@ pub fn parse_hyphenated_ip(s: &str) -> Option<Ipv4Addr> {
 }
 
 pub fn parse_hexadecimal_ip(s: &str) -> Result<Ipv4Addr, ()> {
-    debug!("Attempting to parse hex IP: {}", s);
+    debug!("Attempting to parse hex IP: {s}");
     if s.len() != 8 {
         return Err(());
     }

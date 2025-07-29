@@ -67,7 +67,7 @@ pub fn build_response(
         }
     }
 
-    debug!("Built response: {:?}", response);
+    debug!("Built response: {response:?}");
     response
 }
 
@@ -111,7 +111,7 @@ pub fn build_soa_response(query: &[u8], params: &SoaParams) -> Vec<u8> {
     response.extend(&(rdata.len() as u16).to_be_bytes()); // RDLENGTH
     response.extend(rdata);
 
-    debug!("Built SOA response: {:?}", response);
+    debug!("Built SOA response: {response:?}");
     response
 }
 
@@ -149,6 +149,6 @@ pub fn build_txt_response(query: &[u8], txt_data: &str) -> Vec<u8> {
     response.push(txt_bytes.len() as u8); // Length of the string
     response.extend(txt_bytes); // The actual string
 
-    debug!("Built TXT response: {:?}", response);
+    debug!("Built TXT response: {response:?}");
     response
 }

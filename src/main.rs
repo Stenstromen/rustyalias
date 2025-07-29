@@ -25,7 +25,7 @@ fn main() -> IoResult<()> {
         if let Ok((amt, src)) = udp_socket.recv_from(&mut buf) {
             debug!("Received UDP query from {}: {:?}", src, &buf[..amt]);
             if let Err(e) = handle_query(&buf[..amt], &udp_socket, src, &udp_config) {
-                eprintln!("Error handling UDP query: {}", e);
+                eprintln!("Error handling UDP query: {e}");
             }
         }
     });
@@ -51,7 +51,7 @@ fn main() -> IoResult<()> {
                     }
                 }
             }
-            Err(e) => eprintln!("Error accepting TCP connection: {}", e),
+            Err(e) => eprintln!("Error accepting TCP connection: {e}"),
         }
     }
 
