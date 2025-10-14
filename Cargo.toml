@@ -1,6 +1,6 @@
 [package]
 name = "rustyalias"
-version = "1.6.4"
+version = "1.6.5"
 edition = "2021"
 readme = "README.md"
 rust-version = "1.90.0"
