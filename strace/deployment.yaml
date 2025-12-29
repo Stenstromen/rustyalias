@@ -1,0 +1,78 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustyalias
+spec:
+  progressDeadlineSeconds: 10
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: rustyalias
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: rustyalias
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - env:
+            - name: RUST_LOG
+              value: debug
+            - name: GLUE_NAME
+              value: ns.addr.se
+            - name: SOA_NAME
+              value: ns.addr.se
+            - name: HOSTMASTER
+              value: hostmaster.addr.se
+            - name: GLUE_IP
+              value: 37.27.198.249
+          image: localhost/rustyalias-strace:latest
+          livenessProbe:
+            tcpSocket:
+              port: 5053
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 5053
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          startupProbe:
+            tcpSocket:
+              port: 5053
+            initialDelaySeconds: 1
+            periodSeconds: 5
+            failureThreshold: 30
+          resources:
+            limits:
+              cpu: 200m
+              memory: 32Mi
+            requests:
+              cpu: 50m
+              memory: 16Mi
+          securityContext:
+            runAsUser: 65534
+            runAsGroup: 65534
+            privileged: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            procMount: Default
+            seccompProfile:
+              type: Localhost
+              localhostProfile: profiles/seccomp-profile.json
+          imagePullPolicy: IfNotPresent
+          name: rustyalias
+          ports:
+            - containerPort: 5053
+              protocol: UDP
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30

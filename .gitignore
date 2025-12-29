@@ -1,2 +1,5 @@
 /target
 .DS_Store
+strace/*.log
+strace/strace.log
+strace/*.tar
