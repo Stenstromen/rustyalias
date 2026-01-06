@@ -1,0 +1,36 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustyalias-udp
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: dns-udp
+      protocol: UDP
+      port: 5053
+      targetPort: 5053
+  selector:
+    app: rustyalias
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustyalias-tcp
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: dns-tcp
+      protocol: TCP
+      port: 5053
+      targetPort: 5053
+  selector:
+    app: rustyalias
+  type: ClusterIP
