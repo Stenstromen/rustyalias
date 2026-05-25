@@ -125,6 +125,36 @@ pub fn encode_domain_name(name: &str) -> Vec<u8> {
     encoded
 }
 
+pub fn build_refused_response(query: &[u8]) -> Vec<u8> {
+    let mut response: Vec<u8> = Vec::with_capacity(query.len());
+
+    response.extend(&query[0..2]); // ID
+
+    // Flags byte 1: QR=1 (response), OPCODE=0, AA=0, TC=0, RD=echoed from query.
+    let rd = query.get(2).copied().unwrap_or(0) & 0x01;
+    response.push(0x80 | rd);
+    // Flags byte 2: RA=0, Z=0, RCODE=5 (REFUSED).
+    response.push(0x05);
+
+    response.extend(&query[4..6]); // QDCOUNT
+    response.extend(&[0x00, 0x00]); // ANCOUNT
+    response.extend(&[0x00, 0x00]); // NSCOUNT
+    response.extend(&[0x00, 0x00]); // ARCOUNT
+
+    // Echo the original question section if it can be located.
+    if query.len() > 12 {
+        if let Some(null_offset) = query[12..].iter().position(|&x| x == 0) {
+            let question_end = 12 + null_offset + 5; // null terminator + QTYPE(2) + QCLASS(2)
+            if question_end <= query.len() {
+                response.extend(&query[12..question_end]);
+            }
+        }
+    }
+
+    debug!("Built REFUSED response: {response:?}");
+    response
+}
+
 pub fn build_txt_response(query: &[u8], txt_data: &str) -> Vec<u8> {
     let mut response: Vec<u8> = Vec::with_capacity(512);
     response.extend(&query[0..2]); // ID

@@ -1,7 +1,5 @@
 use std::env;
-use std::fs;
 use std::net::Ipv4Addr;
-use toml::Value;
 
 #[derive(Clone)]
 pub struct Config {
@@ -19,18 +17,8 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Self {
-        let version = fs::read_to_string("Cargo.toml")
-            .ok()
-            .and_then(|content| {
-                content.parse::<Value>().ok().and_then(|value| {
-                    value
-                        .get("package")
-                        .and_then(|pkg| pkg.get("version"))
-                        .and_then(|ver| ver.as_str())
-                        .map(String::from)
-                })
-            })
-            .unwrap_or_else(|| "unknown".to_string());
+        // Baked in at compile time from Cargo.toml; never falls back to "unknown".
+        let version = env!("CARGO_PKG_VERSION").to_string();
 
         Self {
             glue_name: env::var("GLUE_NAME").unwrap_or_else(|_| "ns.example.com".to_string()),
