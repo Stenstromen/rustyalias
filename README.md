@@ -2,6 +2,12 @@
 
 ![Logo](rustyalias.webp)
 
+- [RustyAlias](#rustyalias)
+  - [Podman (Docker)](#podman-docker)
+  - [Dev](#dev)
+  - [Environment Variables](#environment-variables)
+  - [Todo](#todo)
+
 (_Shameless nip.io ripoff written in Rust_)
 
 Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to a hostname using the following formats (dot, dash or hex):
@@ -75,3 +81,10 @@ This project uses the following environment variables:
 | `RETRY`       | SOA Retry interval.                  | `1800`                   |
 | `EXPIRE`      | SOA Expiration interval.             | `604800`                 |
 | `MINIMUM`     | SOA Minimum TTL.                     | `3600`                   |
+
+## Todo
+
+- [ ] Public demo instance
+- [ ] Docker Compose
+- [ ] Cloudflare integration
+- [ ] Rate limit
