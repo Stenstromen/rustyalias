@@ -3,6 +3,7 @@
 ![Logo](rustyalias.webp)
 
 - [RustyAlias](#rustyalias)
+  - [Docker Compose](#docker-compose)
   - [Podman (Docker)](#podman-docker)
   - [Dev](#dev)
   - [Environment Variables](#environment-variables)
@@ -34,6 +35,12 @@ Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to 
 - **`version`** returns **RustyAlias v1.6.0**
 - **`ver`** returns **RustyAlias v1.6.0**
 - **`v`** returns **RustyAlias v1.6.0**
+
+## Docker Compose
+
+```bash
+docker compose up -d
+```
 
 ## Podman (Docker)
 
@@ -85,6 +92,7 @@ This project uses the following environment variables:
 ## Todo
 
 - [ ] Public demo instance
-- [ ] Docker Compose
+- [x] Docker Compose
 - [ ] Cloudflare integration
 - [ ] Rate limit
+- [ ] ARM64 support

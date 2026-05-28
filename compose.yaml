@@ -1,0 +1,12 @@
+services:
+  rustyalias:
+    image: ghcr.io/stenstromen/rustyalias:latest
+    container_name: rustyalias
+    restart: unless-stopped
+    ports:
+      - "53:5053/udp"
+    environment:
+      RUST_LOG: info
+      GLUE_NAME: ns.example.com
+      SOA_NAME: ns.example.com
+      HOSTMASTER: hostmaster.example.com
