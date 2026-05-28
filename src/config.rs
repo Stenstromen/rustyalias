@@ -13,6 +13,8 @@ pub struct Config {
     pub expire: u32,
     pub minimum: u32,
     pub version: String,
+    pub rate_limit_seconds: u64,
+    pub rate_limit_requests: u32,
 }
 
 impl Config {
@@ -50,6 +52,17 @@ impl Config {
                 .parse()
                 .expect("Invalid MINIMUM"),
             version,
+            // Both default to 0 (disabled). Set both to a non-zero value to
+            // enable: e.g. RATE_LIMIT_REQUESTS=20 RATE_LIMIT_SECONDS=1 allows
+            // up to 20 requests per source IP every 1 second.
+            rate_limit_seconds: env::var("RATE_LIMIT_SECONDS")
+                .unwrap_or_else(|_| "0".to_string())
+                .parse()
+                .expect("Invalid RATE_LIMIT_SECONDS"),
+            rate_limit_requests: env::var("RATE_LIMIT_REQUESTS")
+                .unwrap_or_else(|_| "0".to_string())
+                .parse()
+                .expect("Invalid RATE_LIMIT_REQUESTS"),
         }
     }
 }

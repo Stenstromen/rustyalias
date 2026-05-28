@@ -76,23 +76,33 @@ dig @127.0.0.1 -p 5053 1337-c0a801fc.example.com
 
 This project uses the following environment variables:
 
-| Variable Name | Description                          | Default Value            |
-| ------------- | ------------------------------------ | ------------------------ |
-| `RUST_LOG`    | The logging level (`debug`, `info`). | None (no logging)        |
-| `GLUE_NAME`   | Wildcard DNS name.                   | `ns.example.com`         |
-| `GLUE_IP`     | DNS Server IPv4 Address              | `127.0.0.1`              |
-| `SOA_NAME`    | Start of Authority name.             | `ns.example.com`         |
-| `HOSTMASTER`  | Hostmaster name.                     | `hostmaster.example.com` |
-| `SERIAL`      | SOA Serial number.                   | `1`                      |
-| `REFRESH`     | SOA Refresh interval.                | `3600`                   |
-| `RETRY`       | SOA Retry interval.                  | `1800`                   |
-| `EXPIRE`      | SOA Expiration interval.             | `604800`                 |
-| `MINIMUM`     | SOA Minimum TTL.                     | `3600`                   |
+| Variable Name         | Description                                                             | Default Value            |
+| --------------------- | ----------------------------------------------------------------------- | ------------------------ |
+| `RUST_LOG`            | The logging level (`debug`, `info`).                                    | None (no logging)        |
+| `GLUE_NAME`           | Wildcard DNS name.                                                      | `ns.example.com`         |
+| `GLUE_IP`             | DNS Server IPv4 Address                                                 | `127.0.0.1`              |
+| `SOA_NAME`            | Start of Authority name.                                                | `ns.example.com`         |
+| `HOSTMASTER`          | Hostmaster name.                                                        | `hostmaster.example.com` |
+| `SERIAL`              | SOA Serial number.                                                      | `1`                      |
+| `REFRESH`             | SOA Refresh interval.                                                   | `3600`                   |
+| `RETRY`               | SOA Retry interval.                                                     | `1800`                   |
+| `EXPIRE`              | SOA Expiration interval.                                                | `604800`                 |
+| `MINIMUM`             | SOA Minimum TTL.                                                        | `3600`                   |
+| `RATE_LIMIT_REQUESTS` | Max requests per source IP per window. `0` disables rate limiting.      | `0`                      |
+| `RATE_LIMIT_SECONDS`  | Length of the rate-limit window in seconds. `0` disables rate limiting. | `0`                      |
+
+Rate limiting is **off by default**. To enable, set both variables to non-zero values. For example, to allow at most 20 requests per source IP every 1 second:
+
+```bash
+RATE_LIMIT_REQUESTS=20 RATE_LIMIT_SECONDS=1 cargo run
+```
+
+Rate-limited queries are silently dropped (sending a response to a possibly spoofed source would amplify attacks).
 
 ## Todo
 
 - [ ] Public demo instance
 - [x] Docker Compose
 - [ ] Cloudflare integration
-- [ ] Rate limit
+- [x] Rate limit
 - [ ] ARM64 support
