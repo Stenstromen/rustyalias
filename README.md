@@ -128,4 +128,4 @@ Rate-limited queries are silently dropped (sending a response to a possibly spoo
 - [x] Docker Compose
 - [ ] Cloudflare integration
 - [x] Rate limit
-- [ ] ARM64 support
+- [x] ARM64 support
