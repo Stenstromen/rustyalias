@@ -3,6 +3,7 @@
 ![Logo](rustyalias.webp)
 
 - [RustyAlias](#rustyalias)
+  - [Public Demo](#public-demo)
   - [Docker Compose](#docker-compose)
   - [Podman (Docker)](#podman-docker)
   - [Dev](#dev)
@@ -35,6 +36,28 @@ Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to 
 - **`version`** returns **RustyAlias v1.6.0**
 - **`ver`** returns **RustyAlias v1.6.0**
 - **`v`** returns **RustyAlias v1.6.0**
+
+## Public Demo
+
+A public demo instance is available at **`ns.addr.se`**. You can resolve any IP Address against it using the formats described above, for example:
+
+- **`app.127.0.0.1.ns.addr.se`** maps to **127.0.0.1**
+- **`192-168-1-250.ns.addr.se`** maps to **192.168.1.250**
+- **`app-c0a801fc.ns.addr.se`** maps to **192.168.1.252**
+- **`2a04-4e42-200--201.ns.addr.se`** maps to **2a04:4e42:200::201**
+
+Try it out:
+
+```bash
+dig app.127.0.0.1.ns.addr.se
+
+...
+;; QUESTION SECTION:
+;app.127.0.0.1.ns.addr.se.  IN  A
+
+;; ANSWER SECTION:
+app.127.0.0.1.ns.addr.se. 60    IN  A   127.0.0.1
+```
 
 ## Docker Compose
 
@@ -101,7 +124,7 @@ Rate-limited queries are silently dropped (sending a response to a possibly spoo
 
 ## Todo
 
-- [ ] Public demo instance
+- [x] Public demo instance
 - [x] Docker Compose
 - [ ] Cloudflare integration
 - [x] Rate limit
