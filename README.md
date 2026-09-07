@@ -113,8 +113,12 @@ This project uses the following environment variables:
 | `RETRY`               | SOA Retry interval.                                                     | `1800`                   |
 | `EXPIRE`              | SOA Expiration interval.                                                | `604800`                 |
 | `MINIMUM`             | SOA Minimum TTL.                                                        | `3600`                   |
+| `SPF`                 | Apex SPF TXT record. Empty disables.                                    | `v=spf1 -all`            |
+| `DMARC`               | `_dmarc.<zone>` TXT record. Empty disables.                             | `v=DMARC1; p=reject;`    |
 | `RATE_LIMIT_REQUESTS` | Max requests per source IP per window. `0` disables rate limiting.      | `0`                      |
 | `RATE_LIMIT_SECONDS`  | Length of the rate-limit window in seconds. `0` disables rate limiting. | `0`                      |
+
+`SPF` and `DMARC` default to a “this zone does not send mail” posture, which is appropriate for a wildcard IP DNS domain. Set either variable to an empty string to omit that record.
 
 Rate limiting is **off by default**. To enable, set both variables to non-zero values. For example, to allow at most 20 requests per source IP every 1 second:
 

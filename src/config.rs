@@ -12,6 +12,10 @@ pub struct Config {
     pub retry: u32,
     pub expire: u32,
     pub minimum: u32,
+    /// Apex SPF TXT. Empty disables the record.
+    pub spf: String,
+    /// `_dmarc.<zone>` TXT. Empty disables the record.
+    pub dmarc: String,
     pub version: String,
     pub rate_limit_seconds: u64,
     pub rate_limit_requests: u32,
@@ -51,6 +55,9 @@ impl Config {
                 .unwrap_or_else(|_| "3600".to_string())
                 .parse()
                 .expect("Invalid MINIMUM"),
+            // Defaults assume the zone does not send mail. Set to empty to disable.
+            spf: env::var("SPF").unwrap_or_else(|_| "v=spf1 -all".to_string()),
+            dmarc: env::var("DMARC").unwrap_or_else(|_| "v=DMARC1; p=reject;".to_string()),
             version,
             // Both default to 0 (disabled). Set both to a non-zero value to
             // enable: e.g. RATE_LIMIT_REQUESTS=20 RATE_LIMIT_SECONDS=1 allows

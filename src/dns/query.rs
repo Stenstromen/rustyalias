@@ -44,7 +44,12 @@ fn zone_params(config: &Config) -> ZoneParams<'_> {
         retry: config.retry,
         expire: config.expire,
         minimum: config.minimum,
+        spf: (!config.spf.is_empty()).then_some(config.spf.as_str()),
     }
+}
+
+fn dmarc_owner(zone: &str) -> String {
+    format!("_dmarc.{}", zone.trim_end_matches('.'))
 }
 
 /// Returns true if `domain` equals `zone` or is a strict subdomain of `zone`,
@@ -150,6 +155,13 @@ pub fn handle_query_internal(query: &[u8], src: SocketAddr, config: &Config) -> 
         } else {
             build_refused_response(query)
         }
+    } else if !config.dmarc.is_empty() && names_eq(&domain, &dmarc_owner(&config.glue_name)) {
+        if qtype == TYPE_TXT || qtype == TYPE_ANY {
+            info!("Client [{src}] DMARC TXT for [{domain}]");
+            build_txt_response(query, &config.dmarc)
+        } else {
+            build_nodata_response(query, &params)
+        }
     } else if names_eq(&domain, &config.glue_name) {
         info!("Client [{src}] apex query [{domain}] type {qtype}");
         build_apex_response(query, qtype, &params)
@@ -186,6 +198,8 @@ mod tests {
             retry: 1800,
             expire: 604800,
             minimum: 3600,
+            spf: "v=spf1 -all".to_string(),
+            dmarc: "v=DMARC1; p=reject;".to_string(),
             version: "1.8.1".to_string(),
             rate_limit_seconds: 0,
             rate_limit_requests: 0,
@@ -386,5 +400,52 @@ mod tests {
         let resp = handle_query_internal(&q, src(), &cfg).unwrap();
         assert_eq!(resp[2] & 0x01, 0);
         assert!(aa(&resp));
+    }
+
+    #[test]
+    fn apex_spf_txt_is_published() {
+        let cfg = test_config();
+        let q = dns_query("nip.nu", TYPE_TXT);
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert!(aa(&resp));
+        assert_eq!(ancount(&resp), 1);
+        assert!(contains_type(&resp, TYPE_TXT));
+        assert!(resp.windows(cfg.spf.len()).any(|w| w == cfg.spf.as_bytes()));
+    }
+
+    #[test]
+    fn dmarc_txt_is_published() {
+        let cfg = test_config();
+        let q = dns_query("_dmarc.nip.nu", TYPE_TXT);
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert!(aa(&resp));
+        assert_eq!(ancount(&resp), 1);
+        assert!(contains_type(&resp, TYPE_TXT));
+        assert!(resp
+            .windows(cfg.dmarc.len())
+            .any(|w| w == cfg.dmarc.as_bytes()));
+    }
+
+    #[test]
+    fn empty_dmarc_is_nodata() {
+        let mut cfg = test_config();
+        cfg.dmarc.clear();
+        let q = dns_query("_dmarc.nip.nu", TYPE_TXT);
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert!(aa(&resp));
+        assert_eq!(ancount(&resp), 0);
+        assert_eq!(nscount(&resp), 1);
+        assert!(contains_type(&resp, TYPE_SOA));
+    }
+
+    #[test]
+    fn empty_spf_is_nodata() {
+        let mut cfg = test_config();
+        cfg.spf.clear();
+        let q = dns_query("nip.nu", TYPE_TXT);
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert!(aa(&resp));
+        assert_eq!(ancount(&resp), 0);
+        assert!(contains_type(&resp, TYPE_SOA));
     }
 }

@@ -31,6 +31,8 @@ pub struct ZoneParams<'a> {
     pub retry: u32,
     pub expire: u32,
     pub minimum: u32,
+    /// Apex SPF TXT value, if published.
+    pub spf: Option<&'a str>,
 }
 
 enum Owner<'a> {
@@ -267,13 +269,22 @@ pub fn build_apex_response(query: &[u8], qtype: u16, params: &ZoneParams<'_>) ->
         TYPE_A => {
             msg.add_a(OFFSET_ANCOUNT, Owner::Question, params.glue_ip);
         }
+        TYPE_TXT => {
+            let Some(spf) = params.spf else {
+                return nodata(query, params);
+            };
+            msg.add_txt(spf);
+        }
         TYPE_ANY => {
             msg.add_soa(OFFSET_ANCOUNT, Owner::Question, params);
             msg.add_ns(OFFSET_ANCOUNT, Owner::Question, params.ns_name);
             msg.add_a(OFFSET_ANCOUNT, Owner::Question, params.glue_ip);
+            if let Some(spf) = params.spf {
+                msg.add_txt(spf);
+            }
             msg.add_in_bailiwick_glue(params);
         }
-        TYPE_AAAA | TYPE_TXT => return nodata(query, params),
+        TYPE_AAAA => return nodata(query, params),
         _ => return nodata(query, params),
     }
 
@@ -336,6 +347,7 @@ mod tests {
             retry: 1800,
             expire: 604800,
             minimum: 3600,
+            spf: Some("v=spf1 -all"),
         };
         let resp = build_apex_response(&query, TYPE_A, &params);
         let (aa, rd, ra, rcode) = flags(&resp);
