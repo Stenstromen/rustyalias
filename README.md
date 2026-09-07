@@ -41,24 +41,24 @@ Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to 
 
 ## Public Demo
 
-A public demo instance is available at **`ns.addr.se`**. You can resolve any IP Address against it using the formats described above, for example:
+A public demo instance is available at **`nip.nu`**. You can resolve any IP Address against it using the formats described above, for example:
 
-- **`app.127.0.0.1.ns.addr.se`** maps to **127.0.0.1**
-- **`192-168-1-250.ns.addr.se`** maps to **192.168.1.250**
-- **`app-c0a801fc.ns.addr.se`** maps to **192.168.1.252**
-- **`2a04-4e42-200--201.ns.addr.se`** maps to **2a04:4e42:200::201**
+- **`app.127.0.0.1.nip.nu`** maps to **127.0.0.1**
+- **`192-168-1-250.nip.nu`** maps to **192.168.1.250**
+- **`app-c0a801fc.nip.nu`** maps to **192.168.1.252**
+- **`2a04-4e42-200--201.nip.nu`** maps to **2a04:4e42:200::201**
 
 Try it out:
 
 ```bash
-dig app.127.0.0.1.ns.addr.se
+dig app.127.0.0.1.nip.nu
 
 ...
 ;; QUESTION SECTION:
-;app.127.0.0.1.ns.addr.se.  IN  A
+;app.127.0.0.1.nip.nu.  IN  A
 
 ;; ANSWER SECTION:
-app.127.0.0.1.ns.addr.se. 60    IN  A   127.0.0.1
+app.127.0.0.1.ns.nip.nu. 60    IN  A   127.0.0.1
 ```
 
 ## Docker Compose
