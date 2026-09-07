@@ -58,7 +58,7 @@ dig app.127.0.0.1.nip.nu
 ;app.127.0.0.1.nip.nu.  IN  A
 
 ;; ANSWER SECTION:
-app.127.0.0.1.ns.nip.nu. 60    IN  A   127.0.0.1
+app.127.0.0.1.nip.nu. 60    IN  A   127.0.0.1
 ```
 
 ## Docker Compose
