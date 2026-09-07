@@ -13,6 +13,7 @@ const CLASS_IN: u16 = 1;
 const RCODE_NOERROR: u8 = 0;
 const RCODE_NOTIMP: u8 = 4;
 const RCODE_REFUSED: u8 = 5;
+const DEFAULT_UDP_SIZE: usize = 512;
 const EDNS_UDP_SIZE: u16 = 1232;
 const TTL_SOA: u32 = 3600;
 const TTL_RR: u32 = 60;
@@ -23,8 +24,12 @@ const OFFSET_ARCOUNT: usize = 10;
 
 pub struct ZoneParams<'a> {
     pub zone: &'a str,
+    /// SOA MNAME (primary nameserver).
     pub ns_name: &'a str,
+    /// Full NS RRset advertised at the apex.
+    pub ns_names: &'a [String],
     pub glue_ip: Ipv4Addr,
+    pub glue_ip6: Option<Ipv6Addr>,
     pub hostmaster: &'a str,
     pub serial: u32,
     pub refresh: u32,
@@ -68,19 +73,33 @@ pub fn parse_qtype_qclass(query: &[u8]) -> Option<(u16, u16)> {
 }
 
 fn query_has_opt(query: &[u8]) -> bool {
+    opt_udp_payload_size(query).is_some()
+}
+
+/// Client's advertised UDP payload size from OPT CLASS, if present.
+fn opt_udp_payload_size(query: &[u8]) -> Option<usize> {
     if query.len() < 12 {
-        return false;
+        return None;
     }
     let arcount = u16::from_be_bytes([query[10], query[11]]);
     if arcount == 0 {
-        return false;
+        return None;
     }
-    let Some(end) = question_section_end(query) else {
-        return false;
-    };
+    let end = question_section_end(query)?;
     let rest = &query[end..];
-    // Typical query OPT: root name, type 41.
-    rest.len() >= 11 && rest[0] == 0 && rest[1] == 0 && rest[2] == 0x29
+    // Typical query OPT: root name, type 41, CLASS = UDP size.
+    if rest.len() >= 11 && rest[0] == 0 && rest[1] == 0 && rest[2] == 0x29 {
+        let size = u16::from_be_bytes([rest[3], rest[4]]) as usize;
+        return Some(size.max(512));
+    }
+    None
+}
+
+/// Maximum UDP response size for this query (512 without EDNS).
+pub fn udp_response_limit(query: &[u8]) -> usize {
+    opt_udp_payload_size(query)
+        .unwrap_or(DEFAULT_UDP_SIZE)
+        .min(EDNS_UDP_SIZE as usize)
 }
 
 fn bump_count(buf: &mut [u8], offset: usize) {
@@ -98,6 +117,44 @@ fn maybe_append_opt(response: &mut Vec<u8>, query: &[u8]) {
     response.extend(EDNS_UDP_SIZE.to_be_bytes());
     response.extend(&[0, 0, 0, 0]); // EXT RCODE / version / flags
     response.extend(0u16.to_be_bytes()); // RDLEN
+}
+
+/// If `response` exceeds the UDP limit, set TC and keep only header + question (+ OPT).
+pub fn maybe_truncate_udp(response: Vec<u8>, query: &[u8]) -> Vec<u8> {
+    let limit = udp_response_limit(query);
+    if response.len() <= limit {
+        return response;
+    }
+
+    let Some(qend) = question_section_end(query) else {
+        return response;
+    };
+
+    let mut truncated = Vec::with_capacity(qend + 16);
+    truncated.extend(&response[0..2]); // ID
+                                       // Preserve AA/RD/RCODE from the full response, set TC.
+    let flags0 = response.get(2).copied().unwrap_or(0) | 0b0000_0010; // TC
+    let flags1 = response.get(3).copied().unwrap_or(0);
+    truncated.push(flags0);
+    truncated.push(flags1);
+    truncated.extend(&query[4..6]); // QDCOUNT
+    truncated.extend([0, 0, 0, 0, 0, 0]); // AN / NS / AR cleared
+    truncated.extend(&query[12..qend]);
+    maybe_append_opt(&mut truncated, query);
+
+    if truncated.len() > limit {
+        // Drop OPT if the truncated packet is still too large.
+        truncated.truncate(12 + (qend - 12));
+        truncated[OFFSET_ARCOUNT] = 0;
+        truncated[OFFSET_ARCOUNT + 1] = 0;
+    }
+
+    debug!(
+        "Truncated UDP response from {} to {} bytes (limit {limit})",
+        response.len(),
+        truncated.len()
+    );
+    truncated
 }
 
 struct Msg {
@@ -146,6 +203,12 @@ impl Msg {
         self.add_rr(count_offset, owner, TYPE_NS, TTL_RR, &rdata);
     }
 
+    fn add_ns_set(&mut self, count_offset: usize, params: &ZoneParams<'_>) {
+        for name in params.ns_names {
+            self.add_ns(count_offset, Owner::Question, name);
+        }
+    }
+
     fn add_a(&mut self, count_offset: usize, owner: Owner<'_>, ip: Ipv4Addr) {
         self.add_rr(count_offset, owner, TYPE_A, TTL_RR, &ip.octets());
     }
@@ -164,8 +227,13 @@ impl Msg {
     }
 
     fn add_in_bailiwick_glue(&mut self, params: &ZoneParams<'_>) {
-        if ns_needs_glue(params) {
-            self.add_a(OFFSET_ARCOUNT, Owner::Name(params.ns_name), params.glue_ip);
+        for name in params.ns_names {
+            if name_in_bailiwick(name, params.zone) {
+                self.add_a(OFFSET_ARCOUNT, Owner::Name(name), params.glue_ip);
+                if let Some(ip6) = params.glue_ip6 {
+                    self.add_aaaa(OFFSET_ARCOUNT, Owner::Name(name), ip6);
+                }
+            }
         }
     }
 
@@ -176,15 +244,15 @@ impl Msg {
     }
 }
 
-fn ns_needs_glue(params: &ZoneParams<'_>) -> bool {
-    let ns = params.ns_name.trim_end_matches('.');
-    let zone = params.zone.trim_end_matches('.');
-    if ns.eq_ignore_ascii_case(zone) {
+fn name_in_bailiwick(name: &str, zone: &str) -> bool {
+    let name = name.trim_end_matches('.');
+    let zone = zone.trim_end_matches('.');
+    if name.eq_ignore_ascii_case(zone) {
         return true;
     }
-    ns.len() > zone.len() + 1
-        && ns.as_bytes()[ns.len() - zone.len() - 1] == b'.'
-        && ns[ns.len() - zone.len()..].eq_ignore_ascii_case(zone)
+    name.len() > zone.len() + 1
+        && name.as_bytes()[name.len() - zone.len() - 1] == b'.'
+        && name[name.len() - zone.len()..].eq_ignore_ascii_case(zone)
 }
 
 pub fn names_eq(a: &str, b: &str) -> bool {
@@ -259,15 +327,21 @@ pub fn build_apex_response(query: &[u8], qtype: u16, params: &ZoneParams<'_>) ->
     match qtype {
         TYPE_SOA => {
             msg.add_soa(OFFSET_ANCOUNT, Owner::Question, params);
-            msg.add_ns(OFFSET_NSCOUNT, Owner::Question, params.ns_name);
+            msg.add_ns_set(OFFSET_NSCOUNT, params);
             msg.add_in_bailiwick_glue(params);
         }
         TYPE_NS => {
-            msg.add_ns(OFFSET_ANCOUNT, Owner::Question, params.ns_name);
+            msg.add_ns_set(OFFSET_ANCOUNT, params);
             msg.add_in_bailiwick_glue(params);
         }
         TYPE_A => {
             msg.add_a(OFFSET_ANCOUNT, Owner::Question, params.glue_ip);
+        }
+        TYPE_AAAA => {
+            let Some(ip6) = params.glue_ip6 else {
+                return nodata(query, params);
+            };
+            msg.add_aaaa(OFFSET_ANCOUNT, Owner::Question, ip6);
         }
         TYPE_TXT => {
             let Some(spf) = params.spf else {
@@ -277,14 +351,16 @@ pub fn build_apex_response(query: &[u8], qtype: u16, params: &ZoneParams<'_>) ->
         }
         TYPE_ANY => {
             msg.add_soa(OFFSET_ANCOUNT, Owner::Question, params);
-            msg.add_ns(OFFSET_ANCOUNT, Owner::Question, params.ns_name);
+            msg.add_ns_set(OFFSET_ANCOUNT, params);
             msg.add_a(OFFSET_ANCOUNT, Owner::Question, params.glue_ip);
+            if let Some(ip6) = params.glue_ip6 {
+                msg.add_aaaa(OFFSET_ANCOUNT, Owner::Question, ip6);
+            }
             if let Some(spf) = params.spf {
                 msg.add_txt(spf);
             }
             msg.add_in_bailiwick_glue(params);
         }
-        TYPE_AAAA => return nodata(query, params),
         _ => return nodata(query, params),
     }
 
@@ -322,12 +398,30 @@ pub fn build_address_response(
 mod tests {
     use super::*;
 
-    fn flags(resp: &[u8]) -> (bool, bool, bool, u8) {
+    fn flags(resp: &[u8]) -> (bool, bool, bool, bool, u8) {
         let aa = resp[2] & 0x04 != 0;
+        let tc = resp[2] & 0x02 != 0;
         let rd = resp[2] & 0x01 != 0;
         let ra = resp[3] & 0x80 != 0;
         let rcode = resp[3] & 0x0f;
-        (aa, rd, ra, rcode)
+        (aa, tc, rd, ra, rcode)
+    }
+
+    fn sample_params<'a>(ns_names: &'a [String]) -> ZoneParams<'a> {
+        ZoneParams {
+            zone: "example.com",
+            ns_name: "ns.example.com",
+            ns_names,
+            glue_ip: Ipv4Addr::new(1, 2, 3, 4),
+            glue_ip6: Some("2001:db8::1".parse().unwrap()),
+            hostmaster: "hostmaster.example.com",
+            serial: 1,
+            refresh: 3600,
+            retry: 1800,
+            expire: 604800,
+            minimum: 3600,
+            spf: Some("v=spf1 -all"),
+        }
     }
 
     #[test]
@@ -337,21 +431,11 @@ mod tests {
         query.extend(TYPE_A.to_be_bytes());
         query.extend(CLASS_IN.to_be_bytes());
 
-        let params = ZoneParams {
-            zone: "example.com",
-            ns_name: "ns.example.com",
-            glue_ip: Ipv4Addr::new(1, 2, 3, 4),
-            hostmaster: "hostmaster.example.com",
-            serial: 1,
-            refresh: 3600,
-            retry: 1800,
-            expire: 604800,
-            minimum: 3600,
-            spf: Some("v=spf1 -all"),
-        };
-        let resp = build_apex_response(&query, TYPE_A, &params);
-        let (aa, rd, ra, rcode) = flags(&resp);
+        let ns = vec!["ns.example.com".to_string()];
+        let resp = build_apex_response(&query, TYPE_A, &sample_params(&ns));
+        let (aa, tc, rd, ra, rcode) = flags(&resp);
         assert!(aa, "AA must be set on in-zone answers");
+        assert!(!tc);
         assert!(rd, "RD must be copied from the query");
         assert!(!ra, "RA must be clear; this is not a recursive server");
         assert_eq!(rcode, 0);
@@ -364,10 +448,38 @@ mod tests {
         query.extend(TYPE_A.to_be_bytes());
         query.extend(CLASS_IN.to_be_bytes());
         let resp = build_refused_response(&query);
-        let (aa, rd, ra, rcode) = flags(&resp);
+        let (aa, _tc, rd, ra, rcode) = flags(&resp);
         assert!(!aa);
         assert!(!rd);
         assert!(!ra);
         assert_eq!(rcode, RCODE_REFUSED);
+    }
+
+    #[test]
+    fn truncate_sets_tc_when_over_limit() {
+        let mut query = vec![0, 1, 0x01, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        query.extend(encode_domain_name("example.com"));
+        query.extend(TYPE_ANY.to_be_bytes());
+        query.extend(CLASS_IN.to_be_bytes());
+
+        let ns = vec!["ns1.example.com".to_string(), "ns2.example.com".to_string()];
+        let full = build_apex_response(&query, TYPE_ANY, &sample_params(&ns));
+        // Force a tiny limit by crafting a non-EDNS query (512) — pad the
+        // response artificially past 512 to exercise truncation.
+        let mut oversized = full.clone();
+        oversized.extend(vec![0u8; 600]);
+        let truncated = maybe_truncate_udp(oversized, &query);
+        let (_aa, tc, _rd, _ra, _rcode) = flags(&truncated);
+        assert!(tc);
+        assert!(truncated.len() <= DEFAULT_UDP_SIZE);
+        assert_eq!(u16::from_be_bytes([truncated[6], truncated[7]]), 0); // ANCOUNT
+    }
+
+    #[test]
+    fn name_in_bailiwick_checks_labels() {
+        assert!(name_in_bailiwick("ns.example.com", "example.com"));
+        assert!(name_in_bailiwick("example.com", "example.com"));
+        assert!(!name_in_bailiwick("ns.addr.se", "nip.nu"));
+        assert!(!name_in_bailiwick("fakens.example.com.evil", "example.com"));
     }
 }

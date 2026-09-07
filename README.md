@@ -104,9 +104,11 @@ This project uses the following environment variables:
 | Variable Name         | Description                                                             | Default Value            |
 | --------------------- | ----------------------------------------------------------------------- | ------------------------ |
 | `RUST_LOG`            | The logging level (`debug`, `info`).                                    | None (no logging)        |
-| `GLUE_NAME`           | Wildcard DNS name.                                                      | `ns.example.com`         |
-| `GLUE_IP`             | DNS Server IPv4 Address                                                 | `127.0.0.1`              |
-| `SOA_NAME`            | Start of Authority name.                                                | `ns.example.com`         |
+| `GLUE_NAME`           | Wildcard DNS name / zone apex.                                          | `ns.example.com`         |
+| `GLUE_IP`             | DNS server IPv4 address (apex A / in-bailiwick glue).                   | `127.0.0.1`              |
+| `GLUE_IP6`            | DNS server IPv6 address (apex AAAA / glue). Empty disables.             | (unset)                  |
+| `SOA_NAME`            | SOA MNAME (primary nameserver hostname).                                | `ns.example.com`         |
+| `NS_NAMES`            | Comma-separated apex NS set. Defaults to `SOA_NAME` if unset.           | (same as `SOA_NAME`)     |
 | `HOSTMASTER`          | Hostmaster name.                                                        | `hostmaster.example.com` |
 | `SERIAL`              | SOA Serial number.                                                      | `1`                      |
 | `REFRESH`             | SOA Refresh interval.                                                   | `3600`                   |
@@ -119,6 +121,14 @@ This project uses the following environment variables:
 | `RATE_LIMIT_SECONDS`  | Length of the rate-limit window in seconds. `0` disables rate limiting. | `0`                      |
 
 `SPF` and `DMARC` default to a “this zone does not send mail” posture, which is appropriate for a wildcard IP DNS domain. Set either variable to an empty string to omit that record.
+
+For a domain delegated to two nameservers (e.g. `.nu` / `.se`), set the child NS set to match the parent:
+
+```bash
+NS_NAMES=ns.addr.se,ns1.addr.se SOA_NAME=ns1.addr.se GLUE_IP6=2a01:4f9:c012:6a18::1
+```
+
+UDP responses that exceed the client’s EDNS size (or 512 bytes without EDNS) are truncated with the `TC` bit set so resolvers retry over TCP.
 
 Rate limiting is **off by default**. To enable, set both variables to non-zero values. For example, to allow at most 20 requests per source IP every 1 second:
 

@@ -31,7 +31,8 @@ fn main() -> IoResult<()> {
     let udp_config = config.clone();
     let udp_rate_limiter = rate_limiter.clone();
     thread::spawn(move || loop {
-        let mut buf = [0; 512];
+        // EDNS queries may exceed the classic 512-byte UDP limit.
+        let mut buf = [0; 4096];
         if let Ok((amt, src)) = udp_socket.recv_from(&mut buf) {
             debug!("Received UDP query from {}: {:?}", src, &buf[..amt]);
             if !udp_rate_limiter.check(src.ip()) {

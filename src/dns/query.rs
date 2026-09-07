@@ -1,8 +1,8 @@
 use super::ip_parser::interpret_ip;
 use super::response::{
     build_address_response, build_apex_response, build_nodata_response, build_notimp_response,
-    build_refused_response, build_txt_response, names_eq, parse_qtype_qclass, ZoneParams, TYPE_ANY,
-    TYPE_TXT,
+    build_refused_response, build_txt_response, maybe_truncate_udp, names_eq, parse_qtype_qclass,
+    ZoneParams, TYPE_ANY, TYPE_TXT,
 };
 use crate::config::Config;
 use log::{debug, info};
@@ -17,9 +17,11 @@ pub fn handle_query(
     config: &Config,
 ) -> IoResult<()> {
     let response = handle_query_internal(query, src, config)?;
-    if !response.is_empty() {
-        socket.send_to(&response, src)?;
+    if response.is_empty() {
+        return Ok(());
     }
+    let response = maybe_truncate_udp(response, query);
+    socket.send_to(&response, src)?;
     Ok(())
 }
 
@@ -37,7 +39,9 @@ fn zone_params(config: &Config) -> ZoneParams<'_> {
     ZoneParams {
         zone: &config.glue_name,
         ns_name: &config.soa_name,
+        ns_names: &config.ns_names,
         glue_ip: config.glue_ip,
+        glue_ip6: config.glue_ip6,
         hostmaster: &config.hostmaster,
         serial: config.serial,
         refresh: config.refresh,
@@ -50,6 +54,10 @@ fn zone_params(config: &Config) -> ZoneParams<'_> {
 
 fn dmarc_owner(zone: &str) -> String {
     format!("_dmarc.{}", zone.trim_end_matches('.'))
+}
+
+fn is_configured_ns(domain: &str, config: &Config) -> bool {
+    config.ns_names.iter().any(|ns| names_eq(domain, ns)) || names_eq(domain, &config.soa_name)
 }
 
 /// Returns true if `domain` equals `zone` or is a strict subdomain of `zone`,
@@ -165,12 +173,17 @@ pub fn handle_query_internal(query: &[u8], src: SocketAddr, config: &Config) -> 
     } else if names_eq(&domain, &config.glue_name) {
         info!("Client [{src}] apex query [{domain}] type {qtype}");
         build_apex_response(query, qtype, &params)
-    } else if names_eq(&domain, &config.soa_name) && is_in_zone(&domain, &config.glue_name) {
+    } else if is_configured_ns(&domain, config) && is_in_zone(&domain, &config.glue_name) {
         info!(
-            "Client [{}] nameserver hostname [{}] -> [{}]",
-            src, domain, config.glue_ip
+            "Client [{}] nameserver hostname [{}] -> [{}/{:?}]",
+            src, domain, config.glue_ip, config.glue_ip6
         );
-        build_address_response(query, qtype, (Some(config.glue_ip), None), &params)
+        build_address_response(
+            query,
+            qtype,
+            (Some(config.glue_ip), config.glue_ip6),
+            &params,
+        )
     } else if let Some(ip) = interpret_ip(&domain) {
         info!("Client [{src}] resolved [{domain}] to [{ip:?}]");
         build_address_response(query, qtype, ip, &params)
@@ -185,13 +198,15 @@ pub fn handle_query_internal(query: &[u8], src: SocketAddr, config: &Config) -> 
 mod tests {
     use super::*;
     use crate::dns::response::{TYPE_A, TYPE_AAAA, TYPE_NS, TYPE_SOA};
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     fn test_config() -> Config {
         Config {
             glue_name: "nip.nu".to_string(),
             glue_ip: Ipv4Addr::new(37, 27, 198, 249),
+            glue_ip6: Some("2a01:4f9:c012:6a18::1".parse::<Ipv6Addr>().unwrap()),
             soa_name: "ns1.addr.se".to_string(),
+            ns_names: vec!["ns.addr.se".to_string(), "ns1.addr.se".to_string()],
             hostmaster: "hostmaster.nip.nu".to_string(),
             serial: 1,
             refresh: 3600,
@@ -255,6 +270,11 @@ mod tests {
     fn contains_type(resp: &[u8], typ: u16) -> bool {
         let needle = typ.to_be_bytes();
         resp.windows(2).any(|w| w == needle)
+    }
+
+    fn contains_name(resp: &[u8], name: &str) -> bool {
+        let encoded = crate::dns::response::encode_domain_name(name);
+        resp.windows(encoded.len()).any(|w| w == encoded.as_slice())
     }
 
     #[test]
@@ -343,15 +363,16 @@ mod tests {
     }
 
     #[test]
-    fn apex_ns_is_in_answer_without_out_of_zone_glue() {
+    fn apex_ns_returns_full_ns_set() {
         let cfg = test_config();
         let q = dns_query("nip.nu", TYPE_NS);
         let resp = handle_query_internal(&q, src(), &cfg).unwrap();
         assert!(aa(&resp));
-        assert_eq!(ancount(&resp), 1);
+        assert_eq!(ancount(&resp), 2);
         assert_eq!(nscount(&resp), 0);
-        assert_eq!(arcount(&resp), 0);
-        assert!(contains_type(&resp, TYPE_NS));
+        assert_eq!(arcount(&resp), 0); // out-of-bailiwick: no glue
+        assert!(contains_name(&resp, "ns.addr.se"));
+        assert!(contains_name(&resp, "ns1.addr.se"));
     }
 
     #[test]
@@ -365,6 +386,18 @@ mod tests {
     }
 
     #[test]
+    fn apex_aaaa_returns_glue_ip6() {
+        let cfg = test_config();
+        let q = dns_query("nip.nu", TYPE_AAAA);
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert!(aa(&resp));
+        assert_eq!(ancount(&resp), 1);
+        assert!(contains_type(&resp, TYPE_AAAA));
+        let expected = cfg.glue_ip6.unwrap().octets();
+        assert_eq!(&resp[resp.len() - 16..], &expected);
+    }
+
+    #[test]
     fn out_of_zone_ns_hostname_is_refused() {
         let cfg = test_config();
         let q = dns_query("ns1.addr.se", TYPE_A);
@@ -374,14 +407,35 @@ mod tests {
     }
 
     #[test]
-    fn in_zone_nameserver_hostname_has_a() {
+    fn in_zone_nameserver_hostname_has_a_and_aaaa() {
         let mut cfg = test_config();
         cfg.soa_name = "ns.nip.nu".to_string();
+        cfg.ns_names = vec!["ns.nip.nu".to_string(), "ns2.nip.nu".to_string()];
         let q = dns_query("ns.nip.nu", TYPE_A);
         let resp = handle_query_internal(&q, src(), &cfg).unwrap();
         assert!(aa(&resp));
         assert_eq!(ancount(&resp), 1);
         assert_eq!(&resp[resp.len() - 4..], &[37, 27, 198, 249]);
+
+        let q6 = dns_query("ns2.nip.nu", TYPE_AAAA);
+        let resp6 = handle_query_internal(&q6, src(), &cfg).unwrap();
+        assert!(aa(&resp6));
+        assert_eq!(ancount(&resp6), 1);
+        assert!(contains_type(&resp6, TYPE_AAAA));
+    }
+
+    #[test]
+    fn in_bailiwick_ns_includes_glue() {
+        let mut cfg = test_config();
+        cfg.soa_name = "ns.nip.nu".to_string();
+        cfg.ns_names = vec!["ns.nip.nu".to_string(), "ns2.nip.nu".to_string()];
+        let q = dns_query("nip.nu", TYPE_NS);
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert_eq!(ancount(&resp), 2);
+        // A + AAAA for each of two NS names = 4 additional RRs
+        assert_eq!(arcount(&resp), 4);
+        assert!(contains_type(&resp, TYPE_A));
+        assert!(contains_type(&resp, TYPE_AAAA));
     }
 
     #[test]
@@ -447,5 +501,18 @@ mod tests {
         assert!(aa(&resp));
         assert_eq!(ancount(&resp), 0);
         assert!(contains_type(&resp, TYPE_SOA));
+    }
+
+    #[test]
+    fn udp_truncation_sets_tc() {
+        let cfg = test_config();
+        let q = dns_query("nip.nu", crate::dns::response::TYPE_ANY);
+        let full = handle_query_internal(&q, src(), &cfg).unwrap();
+        let mut oversized = full;
+        oversized.extend(std::iter::repeat_n(0u8, 600));
+        let truncated = maybe_truncate_udp(oversized, &q);
+        assert!(truncated[2] & 0x02 != 0, "TC must be set");
+        assert!(truncated.len() <= 512);
+        assert_eq!(ancount(&truncated), 0);
     }
 }
