@@ -3,6 +3,7 @@
 ![Logo](rustyalias.webp)
 
 - [RustyAlias](#rustyalias)
+  - [Hex IPv4](#hex-ipv4)
   - [Public Demo](#public-demo)
   - [Docker Compose](#docker-compose)
   - [Podman (Docker)](#podman-docker)
@@ -20,18 +21,53 @@ Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to 
 
 - **`10.0.0.1.example.com`** maps to **10.0.0.1**
 - **`192-168-1-250.example.com`** maps to **192.168.1.250**
-- **`a000803.example.com`** maps to **10.0.8.3**
+- **`0a000803.example.com`** maps to **10.0.8.3** (hex IPv4)
 - **`2a04-4e42-200--201.example.com`** maps to **2a04:4e42:200::201**
 
 **With a name:**
 
 - **`app.10.8.0.1.example.com`** maps to **10.8.0.1**
 - **`app-116-203-255-68.example.com`** maps to **116.203.255.68**
-- **`app-c0a801fc.example.com`** maps to **192.168.1.252**
+- **`app-c0a801fc.example.com`** maps to **192.168.1.252** (hex IPv4 in the label)
 - **`customer1.app.10.0.0.1.example.com`** maps to **10.0.0.1**
 - **`customer2-app-127-0-0-1.example.com`** maps to **127.0.0.1**
 - **`customer3-app-7f000101.example.com`** maps to **127.0.1.1**
 - **`customer4.2a04-4e42-200--201.example.com`** maps to **2a04:4e42:200::201**
+
+**Dual-stack** (IPv4 and IPv6 as separate labels, either order):
+
+- **`127-0-0-1.2a04-4e42-200--201.example.com`** → **A 127.0.0.1**, **AAAA 2a04:4e42:200::201**
+- **`2a04-4e42-200--201.127-0-0-1.example.com`** → same
+- **`app.127-0-0-1.2a04-4e42-200--201.example.com`** → same
+- **`7f000001.2a04-4e42-200--201.example.com`** → same (hex IPv4)
+
+### Hex IPv4
+
+An IPv4 address can be written as **exactly eight hexadecimal digits**: each octet becomes two hex characters, in network order (no separators).
+
+| Dotted decimal | Octets (decimal) | Octets (hex) | Label |
+| -------------- | ---------------- | ------------ | ----- |
+| `10.0.8.3` | 10, 0, 8, 3 | `0a`, `00`, `08`, `03` | `0a000803` |
+| `192.168.1.252` | 192, 168, 1, 252 | `c0`, `a8`, `01`, `fc` | `c0a801fc` |
+| `127.0.0.1` | 127, 0, 0, 1 | `7f`, `00`, `00`, `01` | `7f000001` |
+
+The eight-digit token can be a label on its own (`0a000803.example.com`) or appear inside a hyphenated name (`app-c0a801fc.example.com`). Digits are case-insensitive (`C0A801FC` works the same).
+
+Generate a hex label from a dotted IPv4 address:
+
+```bash
+# Python
+python3 -c 'import ipaddress,sys; print(ipaddress.IPv4Address(sys.argv[1]).packed.hex())' 192.168.1.252
+# → c0a801fc
+
+# Perl
+printf '%02x%02x%02x%02x\n' 192 168 1 252
+# → c0a801fc
+
+# Bash (IFS splits the address)
+IFS=. read -r a b c d <<< '192.168.1.252'
+printf '%02x%02x%02x%02x\n' "$a" "$b" "$c" "$d"
+```
 
 **Version TXT record:**
 
@@ -47,6 +83,7 @@ A public demo instance is available at **`nip.nu`**. You can resolve any IP Addr
 - **`192-168-1-250.nip.nu`** maps to **192.168.1.250**
 - **`app-c0a801fc.nip.nu`** maps to **192.168.1.252**
 - **`2a04-4e42-200--201.nip.nu`** maps to **2a04:4e42:200::201**
+- **`127-0-0-1.2a04-4e42-200--201.nip.nu`** → **A 127.0.0.1**, **AAAA 2a04:4e42:200::201**
 
 Try it out:
 
