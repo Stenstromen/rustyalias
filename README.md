@@ -3,19 +3,34 @@
 ![Logo](rustyalias.webp)
 
 - [RustyAlias](#rustyalias)
-  - [Hex IPv4](#hex-ipv4)
-  - [Public Demo](#public-demo)
+  - [Try it](#try-it)
+  - [Use Cases](#use-cases)
+    - [Hex IPv4](#hex-ipv4)
+  - [Inspiration](#inspiration)
+  - [Public Wildcard DNS Service — nip.nu](#public-wildcard-dns-service--nipnu)
   - [Docker Compose](#docker-compose)
   - [Podman (Docker)](#podman-docker)
   - [Dev](#dev)
   - [Environment Variables](#environment-variables)
   - [Todo](#todo)
 
-(_Shameless nip.io ripoff written in Rust_)
+**RustyAlias is an open-source wildcard DNS server written in Rust, inspired by services such as nip.io, sslip.io, and the former xip.io. It maps IP addresses directly to hostnames without requiring DNS configuration.**
 
-Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to a hostname using the following formats (dot, dash or hex):
+*A shameless nip.io-inspired implementation, written in Rust.*
 
-![demo](demo.gif)
+## Try it
+
+A free public instance of RustyAlias is available at **nip.nu**:
+
+```bash
+dig 1.2.3.4.nip.nu +short
+# 1.2.3.4
+
+dig app.10.0.0.1.nip.nu +short
+# 10.0.0.1
+```
+
+No account, API, or DNS configuration is required.
 
 **Without a name:**
 
@@ -40,6 +55,19 @@ Wildcard DNS for any IP Address. RustyAlias allows you to map any IP Address to 
 - **`2a04-4e42-200--201.127-0-0-1.example.com`** → same
 - **`app.127-0-0-1.2a04-4e42-200--201.example.com`** → same
 - **`7f000001.2a04-4e42-200--201.example.com`** → same (hex IPv4)
+
+## Use Cases
+
+RustyAlias provides instant hostnames for IP addresses without creating
+DNS records. It is useful for:
+
+- Kubernetes, k3s, and Ingress testing
+- Docker, Podman, and container development
+- Nginx and Traefik reverse-proxy testing
+- Homelabs and self-hosted services
+- Local development environments
+- CI/CD and ephemeral test environments
+- IPv4, IPv6, and dual-stack testing
 
 ### Hex IPv4
 
@@ -75,9 +103,20 @@ printf '%02x%02x%02x%02x\n' "$a" "$b" "$c" "$d"
 - **`ver`** returns **RustyAlias v1.6.0**
 - **`v`** returns **RustyAlias v1.6.0**
 
-## Public Demo
+## Inspiration
 
-A public demo instance is available at **`nip.nu`**. You can resolve any IP Address against it using the formats described above, for example:
+RustyAlias is inspired by [nip.io](https://nip.io/), the wildcard DNS
+service originally created by Roopinder Singh.
+
+RustyAlias is an independent open-source implementation written in Rust.
+It is not affiliated with nip.io.
+
+The project exists both as self-hostable software and as the public
+**nip.nu** wildcard DNS service.
+
+## Public Wildcard DNS Service — nip.nu
+
+nip.nu is a free public RustyAlias wildcard DNS service. You can resolve any IPv4 or IPv6 address against it using the formats described above.
 
 - **`app.127.0.0.1.nip.nu`** maps to **127.0.0.1**
 - **`192-168-1-250.nip.nu`** maps to **192.168.1.250**
@@ -177,7 +216,7 @@ Rate-limited queries are silently dropped (sending a response to a possibly spoo
 
 ## Todo
 
-- [x] Public demo instance
+- [x] Public wildcard DNS service
 - [x] Docker Compose
 - [ ] Cloudflare integration
 - [x] Rate limit
