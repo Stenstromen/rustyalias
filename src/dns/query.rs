@@ -2,7 +2,7 @@ use super::ip_parser::interpret_ip;
 use super::response::{
     build_address_response, build_apex_response, build_nodata_response, build_notimp_response,
     build_refused_response, build_txt_response, maybe_truncate_udp, names_eq, parse_qtype_qclass,
-    ZoneParams, TYPE_ANY, TYPE_TXT,
+    query_dnssec_ok, ZoneParams, TYPE_ANY, TYPE_TXT,
 };
 use crate::config::Config;
 use log::{debug, info};
@@ -35,7 +35,7 @@ fn opcode(query: &[u8]) -> u8 {
     query.get(2).map(|b| (b >> 3) & 0x0f).unwrap_or(0)
 }
 
-fn zone_params(config: &Config) -> ZoneParams<'_> {
+fn zone_params(config: &Config, do_bit: bool) -> ZoneParams<'_> {
     ZoneParams {
         zone: &config.glue_name,
         ns_name: &config.soa_name,
@@ -49,6 +49,8 @@ fn zone_params(config: &Config) -> ZoneParams<'_> {
         expire: config.expire,
         minimum: config.minimum,
         spf: (!config.spf.is_empty()).then_some(config.spf.as_str()),
+        dnssec: config.dnssec.as_ref(),
+        do_bit,
     }
 }
 
@@ -152,23 +154,23 @@ pub fn handle_query_internal(query: &[u8], src: SocketAddr, config: &Config) -> 
         return Ok(build_refused_response(query));
     }
 
-    let params = zone_params(config);
+    let params = zone_params(config, query_dnssec_ok(query));
 
     let response = if is_version_query(&domain) {
         if qtype == TYPE_TXT || qtype == TYPE_ANY {
             info!("Client [{src}] requested version TXT record");
-            build_txt_response(query, &format!("RustyAlias v{}", config.version))
+            build_txt_response(query, &format!("RustyAlias v{}", config.version), &params)
         } else if is_in_zone(&domain, &config.glue_name) {
-            build_nodata_response(query, &params)
+            build_nodata_response(query, &params, &[TYPE_TXT])
         } else {
             build_refused_response(query)
         }
     } else if !config.dmarc.is_empty() && names_eq(&domain, &dmarc_owner(&config.glue_name)) {
         if qtype == TYPE_TXT || qtype == TYPE_ANY {
             info!("Client [{src}] DMARC TXT for [{domain}]");
-            build_txt_response(query, &config.dmarc)
+            build_txt_response(query, &config.dmarc, &params)
         } else {
-            build_nodata_response(query, &params)
+            build_nodata_response(query, &params, &[TYPE_TXT])
         }
     } else if names_eq(&domain, &config.glue_name) {
         info!("Client [{src}] apex query [{domain}] type {qtype}");
@@ -189,7 +191,7 @@ pub fn handle_query_internal(query: &[u8], src: SocketAddr, config: &Config) -> 
         build_address_response(query, qtype, ip, &params)
     } else {
         info!("Client [{src}] query for intermediate subdomain [{domain}] - NODATA");
-        build_nodata_response(query, &params)
+        build_nodata_response(query, &params, &[])
     };
     Ok(response)
 }
@@ -218,6 +220,7 @@ mod tests {
             version: "1.8.1".to_string(),
             rate_limit_seconds: 0,
             rate_limit_requests: 0,
+            dnssec: None,
         }
     }
 
@@ -226,6 +229,10 @@ mod tests {
     }
 
     fn dns_query_with(name: &str, qtype: u16, flags: u16, edns: bool) -> Vec<u8> {
+        dns_query_edns(name, qtype, flags, edns, false)
+    }
+
+    fn dns_query_edns(name: &str, qtype: u16, flags: u16, edns: bool, dnssec_ok: bool) -> Vec<u8> {
         let mut q = Vec::new();
         q.extend([0x12, 0x34]);
         q.extend(flags.to_be_bytes());
@@ -238,7 +245,10 @@ mod tests {
             q.push(0);
             q.extend(41u16.to_be_bytes());
             q.extend(1232u16.to_be_bytes());
-            q.extend([0, 0, 0, 0]);
+            q.push(0);
+            q.push(0);
+            let opt_flags: u16 = if dnssec_ok { 0x8000 } else { 0 };
+            q.extend(opt_flags.to_be_bytes());
             q.extend(0u16.to_be_bytes());
         }
         q
@@ -514,5 +524,89 @@ mod tests {
         assert!(truncated[2] & 0x02 != 0, "TC must be set");
         assert!(truncated.len() <= 512);
         assert_eq!(ancount(&truncated), 0);
+    }
+
+    #[test]
+    fn dnskey_without_signing_is_nodata() {
+        let cfg = test_config();
+        let q = dns_query("nip.nu", crate::dns::response::TYPE_DNSKEY);
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert!(aa(&resp));
+        assert_eq!(ancount(&resp), 0);
+        assert_eq!(nscount(&resp), 1);
+        assert!(contains_type(&resp, TYPE_SOA));
+    }
+
+    fn signed_config() -> Config {
+        let mut cfg = test_config();
+        cfg.dnssec = Some(crate::dns::dnssec::DnssecKey::generate());
+        cfg
+    }
+
+    #[test]
+    fn dnskey_is_published_without_do_bit() {
+        let cfg = signed_config();
+        let q = dns_query("nip.nu", crate::dns::response::TYPE_DNSKEY);
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert!(aa(&resp));
+        assert_eq!(ancount(&resp), 1);
+        assert!(contains_type(&resp, crate::dns::response::TYPE_DNSKEY));
+        assert!(!contains_type(&resp, crate::dns::response::TYPE_RRSIG));
+    }
+
+    #[test]
+    fn dnskey_with_do_includes_rrsig() {
+        let cfg = signed_config();
+        let q = dns_query_edns(
+            "nip.nu",
+            crate::dns::response::TYPE_DNSKEY,
+            0x0100,
+            true,
+            true,
+        );
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert!(aa(&resp));
+        assert_eq!(ancount(&resp), 2); // DNSKEY + RRSIG
+        assert!(contains_type(&resp, crate::dns::response::TYPE_DNSKEY));
+        assert!(contains_type(&resp, crate::dns::response::TYPE_RRSIG));
+        assert_eq!(arcount(&resp), 1); // OPT
+    }
+
+    #[test]
+    fn cds_and_cdnskey_are_published() {
+        let cfg = signed_config();
+        for typ in [
+            crate::dns::response::TYPE_CDS,
+            crate::dns::response::TYPE_CDNSKEY,
+        ] {
+            let q = dns_query("nip.nu", typ);
+            let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+            assert!(aa(&resp));
+            assert_eq!(ancount(&resp), 1);
+            assert!(contains_type(&resp, typ));
+        }
+    }
+
+    #[test]
+    fn signed_a_record_includes_rrsig() {
+        let cfg = signed_config();
+        let q = dns_query_edns("127.0.0.1.nip.nu", TYPE_A, 0x0100, true, true);
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert!(aa(&resp));
+        assert_eq!(ancount(&resp), 2); // A + RRSIG
+        assert!(contains_type(&resp, TYPE_A));
+        assert!(contains_type(&resp, crate::dns::response::TYPE_RRSIG));
+    }
+
+    #[test]
+    fn signed_nodata_includes_nsec() {
+        let cfg = signed_config();
+        let q = dns_query_edns("not-an-ip.nip.nu", TYPE_A, 0x0100, true, true);
+        let resp = handle_query_internal(&q, src(), &cfg).unwrap();
+        assert!(aa(&resp));
+        assert_eq!(ancount(&resp), 0);
+        assert!(contains_type(&resp, TYPE_SOA));
+        assert!(contains_type(&resp, crate::dns::response::TYPE_NSEC));
+        assert!(contains_type(&resp, crate::dns::response::TYPE_RRSIG));
     }
 }

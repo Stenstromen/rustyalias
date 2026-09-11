@@ -12,6 +12,7 @@
   - [Podman (Docker)](#podman-docker)
   - [Dev](#dev)
   - [Environment Variables](#environment-variables)
+    - [DNSSEC](#dnssec)
   - [Todo](#todo)
 
 **RustyAlias is an open-source wildcard DNS server written in Rust, inspired by services such as nip.io, sslip.io, and the former xip.io. It maps IP addresses directly to hostnames without requiring DNS configuration.**
@@ -193,6 +194,7 @@ This project uses the following environment variables:
 | `MINIMUM`             | SOA Minimum TTL.                                                        | `3600`                   |
 | `SPF`                 | Apex SPF TXT record. Empty disables.                                    | `v=spf1 -all`            |
 | `DMARC`               | `_dmarc.<zone>` TXT record. Empty disables.                             | `v=DMARC1; p=reject;`    |
+| `DNSSEC_PRIVATE_KEY`  | P-256 private key (64-char hex, PKCS#8 PEM, or SEC1 PEM). Empty disables DNSSEC. | (unset)            |
 | `RATE_LIMIT_REQUESTS` | Max requests per source IP per window. `0` disables rate limiting.      | `0`                      |
 | `RATE_LIMIT_SECONDS`  | Length of the rate-limit window in seconds. `0` disables rate limiting. | `0`                      |
 
@@ -205,6 +207,35 @@ NS_NAMES=ns.addr.se,ns1.addr.se SOA_NAME=ns1.addr.se GLUE_IP6=2a01:4f9:c012:6a18
 ```
 
 UDP responses that exceed the client’s EDNS size (or 512 bytes without EDNS) are truncated with the `TC` bit set so resolvers retry over TCP.
+
+### DNSSEC
+
+RustyAlias can **online-sign** answers with ECDSA P-256 SHA-256 (algorithm 13). That is required for a wildcard zone: names like `127.0.0.1.nip.nu` are synthesized on the fly, so signatures cannot be precomputed.
+
+**one.com’s “automatically look up” DS records does not mean “turn a flag on in code and we are done.”** The registrar queries your **live nameservers** for DNSKEY or CDS data and then publishes a matching DS at the parent. If those records are not already being served, lookup finds nothing.
+
+Enable DNSSEC in this order:
+
+1. Generate a key (keep it identical on **every** nameserver):
+
+   ```bash
+   cargo run -- --generate-dnssec-key
+   # or, with GLUE_NAME set, the printed DS digest matches your zone:
+   GLUE_NAME=nip.nu cargo run -- --generate-dnssec-key
+   ```
+
+2. Set `DNSSEC_PRIVATE_KEY` and deploy. Confirm over **TCP** (Internetstiftelsen’s `.nu` scanner uses TCP only):
+
+   ```bash
+   dig @ns.example.com nip.nu DNSKEY +dnssec +tcp
+   dig @ns.example.com nip.nu CDS +dnssec +tcp
+   ```
+
+3. **Then** add DS at the parent. Do not publish DS first: validating resolvers will SERVFAIL the whole zone until the child is signing.
+
+For **`.nu` / `.se`**, [Internetstiftelsen scans CDS daily](https://internetstiftelsen.se/en/domains/tech-tools/automated-dnssec-provisioning/) from three locations over TCP. If every nameserver publishes the same signed CDS RRset for more than 72 hours, the registry installs DS automatically. Track progress at [cds.registry.se](https://cds.registry.se/).
+
+one.com’s lookup / DS form is still useful as a faster path: paste the four fields printed at startup (KeyTag, Algorithm `13`, Digest type `2`, Digest). With external nameservers, one.com does **not** keep polling; it is a one-shot fill of the DS record.
 
 Rate limiting is **off by default**. To enable, set both variables to non-zero values. For example, to allow at most 20 requests per source IP every 1 second:
 
@@ -221,3 +252,4 @@ Rate-limited queries are silently dropped (sending a response to a possibly spoo
 - [ ] Cloudflare integration
 - [x] Rate limit
 - [x] ARM64 support
+- [x] DNSSEC

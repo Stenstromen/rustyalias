@@ -5,8 +5,12 @@ services:
     restart: unless-stopped
     ports:
       - "53:5053/udp"
+      - "53:5053/tcp"
     environment:
       RUST_LOG: info
       GLUE_NAME: ns.example.com
       SOA_NAME: ns.example.com
       HOSTMASTER: hostmaster.example.com
+      # Identical on every nameserver. Generate with:
+      #   rustyalias --generate-dnssec-key
+      # DNSSEC_PRIVATE_KEY: "..."

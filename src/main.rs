@@ -13,6 +13,11 @@ use std::net::{TcpListener, UdpSocket};
 use std::thread;
 
 fn main() -> IoResult<()> {
+    if std::env::args().any(|a| a == "--generate-dnssec-key") {
+        dns::dnssec::generate_and_print();
+        return Ok(());
+    }
+
     init();
     let config = Config::from_env();
     let rate_limiter = RateLimiter::new(config.rate_limit_seconds, config.rate_limit_requests);
@@ -21,6 +26,14 @@ fn main() -> IoResult<()> {
     let tcp_listener = TcpListener::bind("[::]:5053")?;
 
     println!("RustyAlias Server Started on Port 5053 (UDP/TCP)");
+    if let Some(ref key) = config.dnssec {
+        println!("DNSSEC enabled (ECDSAP256SHA256, key tag {})", key.key_tag);
+        println!(
+            "  DS: {} IN DS {}",
+            config.glue_name,
+            key.ds_presentation(&config.glue_name)
+        );
+    }
     if rate_limiter.is_enabled() {
         println!(
             "Rate limit: {} requests per {} second(s) per source IP",

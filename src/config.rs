@@ -23,6 +23,7 @@ pub struct Config {
     pub version: String,
     pub rate_limit_seconds: u64,
     pub rate_limit_requests: u32,
+    pub dnssec: Option<crate::dns::dnssec::DnssecKey>,
 }
 
 impl Config {
@@ -82,6 +83,7 @@ impl Config {
                 .unwrap_or_else(|_| "0".to_string())
                 .parse()
                 .expect("Invalid RATE_LIMIT_REQUESTS"),
+            dnssec: crate::dns::dnssec::DnssecKey::from_env(),
         }
     }
 }

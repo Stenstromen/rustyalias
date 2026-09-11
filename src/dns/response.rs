@@ -1,3 +1,4 @@
+use super::dnssec::{self, DnssecKey};
 use log::debug;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -7,6 +8,11 @@ pub const TYPE_SOA: u16 = 6;
 pub const TYPE_TXT: u16 = 16;
 pub const TYPE_AAAA: u16 = 28;
 pub const TYPE_OPT: u16 = 41;
+pub const TYPE_RRSIG: u16 = 46;
+pub const TYPE_NSEC: u16 = 47;
+pub const TYPE_DNSKEY: u16 = 48;
+pub const TYPE_CDS: u16 = 59;
+pub const TYPE_CDNSKEY: u16 = 60;
 pub const TYPE_ANY: u16 = 255;
 
 const CLASS_IN: u16 = 1;
@@ -38,8 +44,32 @@ pub struct ZoneParams<'a> {
     pub minimum: u32,
     /// Apex SPF TXT value, if published.
     pub spf: Option<&'a str>,
+    pub dnssec: Option<&'a DnssecKey>,
+    /// EDNS DO bit from the query.
+    pub do_bit: bool,
 }
 
+impl ZoneParams<'_> {
+    fn sign(&self) -> bool {
+        self.dnssec.is_some() && self.do_bit
+    }
+
+    fn apex_types(&self) -> Vec<u16> {
+        let mut types = vec![TYPE_SOA, TYPE_NS, TYPE_A];
+        if self.glue_ip6.is_some() {
+            types.push(TYPE_AAAA);
+        }
+        if self.spf.is_some() {
+            types.push(TYPE_TXT);
+        }
+        if self.dnssec.is_some() {
+            types.extend([TYPE_DNSKEY, TYPE_CDS, TYPE_CDNSKEY]);
+        }
+        types
+    }
+}
+
+#[derive(Clone, Copy)]
 enum Owner<'a> {
     /// Compression pointer to the QNAME at offset 12.
     Question,
@@ -76,8 +106,8 @@ fn query_has_opt(query: &[u8]) -> bool {
     opt_udp_payload_size(query).is_some()
 }
 
-/// Client's advertised UDP payload size from OPT CLASS, if present.
-fn opt_udp_payload_size(query: &[u8]) -> Option<usize> {
+/// Client OPT RR at the start of Additional, if present: (udp_size, do_bit).
+fn parse_query_opt(query: &[u8]) -> Option<(usize, bool)> {
     if query.len() < 12 {
         return None;
     }
@@ -90,9 +120,20 @@ fn opt_udp_payload_size(query: &[u8]) -> Option<usize> {
     // Typical query OPT: root name, type 41, CLASS = UDP size.
     if rest.len() >= 11 && rest[0] == 0 && rest[1] == 0 && rest[2] == 0x29 {
         let size = u16::from_be_bytes([rest[3], rest[4]]) as usize;
-        return Some(size.max(512));
+        let flags = u16::from_be_bytes([rest[7], rest[8]]);
+        return Some((size.max(512), flags & 0x8000 != 0));
     }
     None
+}
+
+/// Client's advertised UDP payload size from OPT CLASS, if present.
+fn opt_udp_payload_size(query: &[u8]) -> Option<usize> {
+    parse_query_opt(query).map(|(size, _)| size)
+}
+
+/// True when the query OPT has the DNSSEC OK (DO) bit set.
+pub fn query_dnssec_ok(query: &[u8]) -> bool {
+    parse_query_opt(query).is_some_and(|(_, do_bit)| do_bit)
 }
 
 /// Maximum UDP response size for this query (512 without EDNS).
@@ -107,7 +148,7 @@ fn bump_count(buf: &mut [u8], offset: usize) {
     buf[offset..offset + 2].copy_from_slice(&n.to_be_bytes());
 }
 
-fn maybe_append_opt(response: &mut Vec<u8>, query: &[u8]) {
+fn maybe_append_opt(response: &mut Vec<u8>, query: &[u8], dnssec_ok: bool) {
     if !query_has_opt(query) || response.len() < 12 {
         return;
     }
@@ -115,7 +156,10 @@ fn maybe_append_opt(response: &mut Vec<u8>, query: &[u8]) {
     response.push(0); // root
     response.extend(TYPE_OPT.to_be_bytes());
     response.extend(EDNS_UDP_SIZE.to_be_bytes());
-    response.extend(&[0, 0, 0, 0]); // EXT RCODE / version / flags
+    response.push(0); // EXT RCODE
+    response.push(0); // EDNS version
+    let flags: u16 = if dnssec_ok { 0x8000 } else { 0 };
+    response.extend(flags.to_be_bytes());
     response.extend(0u16.to_be_bytes()); // RDLEN
 }
 
@@ -140,7 +184,7 @@ pub fn maybe_truncate_udp(response: Vec<u8>, query: &[u8]) -> Vec<u8> {
     truncated.extend(&query[4..6]); // QDCOUNT
     truncated.extend([0, 0, 0, 0, 0, 0]); // AN / NS / AR cleared
     truncated.extend(&query[12..qend]);
-    maybe_append_opt(&mut truncated, query);
+    maybe_append_opt(&mut truncated, query, false);
 
     if truncated.len() > limit {
         // Drop OPT if the truncated packet is still too large.
@@ -157,11 +201,21 @@ pub fn maybe_truncate_udp(response: Vec<u8>, query: &[u8]) -> Vec<u8> {
     truncated
 }
 
-struct Msg {
-    buf: Vec<u8>,
+struct Rr<'a> {
+    owner: Owner<'a>,
+    typ: u16,
+    ttl: u32,
+    rdata: Vec<u8>,
 }
 
-impl Msg {
+struct Msg<'a> {
+    buf: Vec<u8>,
+    answers: Vec<Rr<'a>>,
+    authority: Vec<Rr<'a>>,
+    additional: Vec<Rr<'a>>,
+}
+
+impl<'a> Msg<'a> {
     fn with_question(query: &[u8], aa: bool, rcode: u8) -> Option<Self> {
         let end = question_section_end(query)?;
         let mut buf = Vec::with_capacity(512);
@@ -170,23 +224,29 @@ impl Msg {
         buf.extend(&query[4..6]); // QDCOUNT
         buf.extend([0, 0, 0, 0, 0, 0]); // AN / NS / AR
         buf.extend(&query[12..end]);
-        Some(Self { buf })
+        Some(Self {
+            buf,
+            answers: Vec::new(),
+            authority: Vec::new(),
+            additional: Vec::new(),
+        })
     }
 
-    fn add_rr(&mut self, count_offset: usize, owner: Owner<'_>, typ: u16, ttl: u32, rdata: &[u8]) {
-        match owner {
-            Owner::Question => self.buf.extend([0xC0, 0x0C]),
-            Owner::Name(name) => self.buf.extend(encode_domain_name(name)),
+    fn add_rr(&mut self, count_offset: usize, owner: Owner<'a>, typ: u16, ttl: u32, rdata: &[u8]) {
+        let rr = Rr {
+            owner,
+            typ,
+            ttl,
+            rdata: rdata.to_vec(),
+        };
+        match count_offset {
+            OFFSET_NSCOUNT => self.authority.push(rr),
+            OFFSET_ARCOUNT => self.additional.push(rr),
+            _ => self.answers.push(rr),
         }
-        self.buf.extend(typ.to_be_bytes());
-        self.buf.extend(CLASS_IN.to_be_bytes());
-        self.buf.extend(ttl.to_be_bytes());
-        self.buf.extend((rdata.len() as u16).to_be_bytes());
-        self.buf.extend(rdata);
-        bump_count(&mut self.buf, count_offset);
     }
 
-    fn add_soa(&mut self, count_offset: usize, owner: Owner<'_>, params: &ZoneParams<'_>) {
+    fn add_soa(&mut self, count_offset: usize, owner: Owner<'a>, params: &ZoneParams<'_>) {
         let mut rdata = Vec::new();
         rdata.extend(encode_domain_name(params.ns_name));
         rdata.extend(encode_domain_name(params.hostmaster));
@@ -198,7 +258,7 @@ impl Msg {
         self.add_rr(count_offset, owner, TYPE_SOA, TTL_SOA, &rdata);
     }
 
-    fn add_ns(&mut self, count_offset: usize, owner: Owner<'_>, ns_name: &str) {
+    fn add_ns(&mut self, count_offset: usize, owner: Owner<'a>, ns_name: &str) {
         let rdata = encode_domain_name(ns_name);
         self.add_rr(count_offset, owner, TYPE_NS, TTL_RR, &rdata);
     }
@@ -209,11 +269,11 @@ impl Msg {
         }
     }
 
-    fn add_a(&mut self, count_offset: usize, owner: Owner<'_>, ip: Ipv4Addr) {
+    fn add_a(&mut self, count_offset: usize, owner: Owner<'a>, ip: Ipv4Addr) {
         self.add_rr(count_offset, owner, TYPE_A, TTL_RR, &ip.octets());
     }
 
-    fn add_aaaa(&mut self, count_offset: usize, owner: Owner<'_>, ip: Ipv6Addr) {
+    fn add_aaaa(&mut self, count_offset: usize, owner: Owner<'a>, ip: Ipv6Addr) {
         self.add_rr(count_offset, owner, TYPE_AAAA, TTL_RR, &ip.octets());
     }
 
@@ -226,7 +286,41 @@ impl Msg {
         self.add_rr(OFFSET_ANCOUNT, Owner::Question, TYPE_TXT, TTL_RR, &rdata);
     }
 
-    fn add_in_bailiwick_glue(&mut self, params: &ZoneParams<'_>) {
+    fn add_dnskey(&mut self, params: &ZoneParams<'_>) {
+        let Some(key) = params.dnssec else {
+            return;
+        };
+        self.add_rr(
+            OFFSET_ANCOUNT,
+            Owner::Question,
+            TYPE_DNSKEY,
+            TTL_SOA,
+            key.dnskey_rdata(),
+        );
+    }
+
+    fn add_cds(&mut self, params: &ZoneParams<'_>) {
+        let Some(key) = params.dnssec else {
+            return;
+        };
+        let rdata = key.ds_rdata(params.zone);
+        self.add_rr(OFFSET_ANCOUNT, Owner::Question, TYPE_CDS, TTL_SOA, &rdata);
+    }
+
+    fn add_cdnskey(&mut self, params: &ZoneParams<'_>) {
+        let Some(key) = params.dnssec else {
+            return;
+        };
+        self.add_rr(
+            OFFSET_ANCOUNT,
+            Owner::Question,
+            TYPE_CDNSKEY,
+            TTL_SOA,
+            key.dnskey_rdata(),
+        );
+    }
+
+    fn add_in_bailiwick_glue(&mut self, params: &ZoneParams<'a>) {
         for name in params.ns_names {
             if name_in_bailiwick(name, params.zone) {
                 self.add_a(OFFSET_ARCOUNT, Owner::Name(name), params.glue_ip);
@@ -237,10 +331,83 @@ impl Msg {
         }
     }
 
-    fn finish(mut self, query: &[u8]) -> Vec<u8> {
-        maybe_append_opt(&mut self.buf, query);
+    fn finish(mut self, query: &[u8], params: &ZoneParams<'_>) -> Vec<u8> {
+        emit_section(&mut self.buf, OFFSET_ANCOUNT, self.answers, query, params);
+        emit_section(&mut self.buf, OFFSET_NSCOUNT, self.authority, query, params);
+        emit_section(
+            &mut self.buf,
+            OFFSET_ARCOUNT,
+            self.additional,
+            query,
+            params,
+        );
+        maybe_append_opt(&mut self.buf, query, params.sign());
         debug!("Built response: {:?}", self.buf);
         self.buf
+    }
+}
+
+fn owner_eq(a: Owner<'_>, b: Owner<'_>) -> bool {
+    match (a, b) {
+        (Owner::Question, Owner::Question) => true,
+        (Owner::Name(x), Owner::Name(y)) => names_eq(x, y),
+        _ => false,
+    }
+}
+
+fn write_rr(buf: &mut Vec<u8>, owner: Owner<'_>, typ: u16, ttl: u32, rdata: &[u8]) {
+    match owner {
+        Owner::Question => buf.extend([0xC0, 0x0C]),
+        Owner::Name(name) => buf.extend(encode_domain_name(name)),
+    }
+    buf.extend(typ.to_be_bytes());
+    buf.extend(CLASS_IN.to_be_bytes());
+    buf.extend(ttl.to_be_bytes());
+    buf.extend((rdata.len() as u16).to_be_bytes());
+    buf.extend(rdata);
+}
+
+fn emit_section(
+    buf: &mut Vec<u8>,
+    count_offset: usize,
+    rrs: Vec<Rr<'_>>,
+    query: &[u8],
+    params: &ZoneParams<'_>,
+) {
+    let mut groups: Vec<Vec<Rr<'_>>> = Vec::new();
+    for rr in rrs {
+        if let Some(last) = groups.last_mut() {
+            if owner_eq(last[0].owner, rr.owner) && last[0].typ == rr.typ {
+                last.push(rr);
+                continue;
+            }
+        }
+        groups.push(vec![rr]);
+    }
+
+    for group in groups {
+        let owner = group[0].owner;
+        let typ = group[0].typ;
+        let ttl = group[0].ttl;
+        let mut rdatas: Vec<Vec<u8>> = group.into_iter().map(|r| r.rdata).collect();
+        rdatas.sort();
+
+        for rdata in &rdatas {
+            write_rr(buf, owner, typ, ttl, rdata);
+            bump_count(buf, count_offset);
+        }
+
+        if typ != TYPE_RRSIG {
+            if let Some(key) = params.dnssec.filter(|_| params.do_bit) {
+                let owner_wire = match owner {
+                    Owner::Question => dnssec::owner_canonical_wire(query, true, None),
+                    Owner::Name(name) => dnssec::owner_canonical_wire(query, false, Some(name)),
+                };
+                let rrsig = key.sign_rrsig(&owner_wire, typ, ttl, &rdatas, params.zone);
+                write_rr(buf, owner, TYPE_RRSIG, ttl, &rrsig);
+                bump_count(buf, count_offset);
+            }
+        }
     }
 }
 
@@ -266,7 +433,7 @@ pub fn encode_domain_name(name: &str) -> Vec<u8> {
     if !name.is_empty() {
         for part in name.split('.') {
             encoded.push(part.len() as u8);
-            encoded.extend(part.as_bytes());
+            encoded.extend(part.to_ascii_lowercase().as_bytes());
         }
     }
     encoded.push(0);
@@ -285,7 +452,7 @@ fn error_response(query: &[u8], rcode: u8) -> Vec<u8> {
     if let Some(end) = question_section_end(query) {
         buf.extend(&query[12..end]);
     }
-    maybe_append_opt(&mut buf, query);
+    maybe_append_opt(&mut buf, query, false);
     debug!("Built error response rcode={rcode}: {buf:?}");
     buf
 }
@@ -298,25 +465,44 @@ pub fn build_notimp_response(query: &[u8]) -> Vec<u8> {
     error_response(query, RCODE_NOTIMP)
 }
 
-fn nodata(query: &[u8], params: &ZoneParams<'_>) -> Vec<u8> {
+fn nodata(query: &[u8], params: &ZoneParams<'_>, existing_types: &[u16]) -> Vec<u8> {
     let Some(mut msg) = Msg::with_question(query, true, RCODE_NOERROR) else {
         return Vec::new();
     };
     // RFC 2308: negative TTL is the SOA minimum; owner is the zone apex, not QNAME.
     msg.add_soa(OFFSET_NSCOUNT, Owner::Name(params.zone), params);
-    msg.finish(query)
+    if params.sign() {
+        let Some(end) = question_section_end(query) else {
+            return msg.finish(query, params);
+        };
+        let qname = &query[12..end - 4];
+        let types = dnssec::nsec_types(existing_types);
+        let rdata = dnssec::nsec_rdata(qname, &types);
+        msg.add_rr(
+            OFFSET_NSCOUNT,
+            Owner::Question,
+            TYPE_NSEC,
+            params.minimum,
+            &rdata,
+        );
+    }
+    msg.finish(query, params)
 }
 
-pub fn build_nodata_response(query: &[u8], params: &ZoneParams<'_>) -> Vec<u8> {
-    nodata(query, params)
+pub fn build_nodata_response(
+    query: &[u8],
+    params: &ZoneParams<'_>,
+    existing_types: &[u16],
+) -> Vec<u8> {
+    nodata(query, params, existing_types)
 }
 
-pub fn build_txt_response(query: &[u8], txt_data: &str) -> Vec<u8> {
+pub fn build_txt_response(query: &[u8], txt_data: &str, params: &ZoneParams<'_>) -> Vec<u8> {
     let Some(mut msg) = Msg::with_question(query, true, RCODE_NOERROR) else {
         return Vec::new();
     };
     msg.add_txt(txt_data);
-    msg.finish(query)
+    msg.finish(query, params)
 }
 
 pub fn build_apex_response(query: &[u8], qtype: u16, params: &ZoneParams<'_>) -> Vec<u8> {
@@ -339,15 +525,51 @@ pub fn build_apex_response(query: &[u8], qtype: u16, params: &ZoneParams<'_>) ->
         }
         TYPE_AAAA => {
             let Some(ip6) = params.glue_ip6 else {
-                return nodata(query, params);
+                return nodata(query, params, &params.apex_types());
             };
             msg.add_aaaa(OFFSET_ANCOUNT, Owner::Question, ip6);
         }
         TYPE_TXT => {
             let Some(spf) = params.spf else {
-                return nodata(query, params);
+                return nodata(query, params, &params.apex_types());
             };
             msg.add_txt(spf);
+        }
+        TYPE_DNSKEY => {
+            if params.dnssec.is_none() {
+                return nodata(query, params, &params.apex_types());
+            }
+            msg.add_dnskey(params);
+        }
+        TYPE_CDS => {
+            if params.dnssec.is_none() {
+                return nodata(query, params, &params.apex_types());
+            }
+            msg.add_cds(params);
+        }
+        TYPE_CDNSKEY => {
+            if params.dnssec.is_none() {
+                return nodata(query, params, &params.apex_types());
+            }
+            msg.add_cdnskey(params);
+        }
+        TYPE_NSEC => {
+            if params.dnssec.is_none() {
+                return nodata(query, params, &params.apex_types());
+            }
+            let Some(end) = question_section_end(query) else {
+                return Vec::new();
+            };
+            let qname = &query[12..end - 4];
+            let types = dnssec::nsec_types(&params.apex_types());
+            let rdata = dnssec::nsec_rdata(qname, &types);
+            msg.add_rr(
+                OFFSET_ANCOUNT,
+                Owner::Question,
+                TYPE_NSEC,
+                params.minimum,
+                &rdata,
+            );
         }
         TYPE_ANY => {
             msg.add_soa(OFFSET_ANCOUNT, Owner::Question, params);
@@ -359,12 +581,28 @@ pub fn build_apex_response(query: &[u8], qtype: u16, params: &ZoneParams<'_>) ->
             if let Some(spf) = params.spf {
                 msg.add_txt(spf);
             }
+            if params.dnssec.is_some() {
+                msg.add_dnskey(params);
+                msg.add_cds(params);
+                msg.add_cdnskey(params);
+            }
             msg.add_in_bailiwick_glue(params);
         }
-        _ => return nodata(query, params),
+        _ => return nodata(query, params, &params.apex_types()),
     }
 
-    msg.finish(query)
+    msg.finish(query, params)
+}
+
+fn address_types(ip: (Option<Ipv4Addr>, Option<Ipv6Addr>)) -> Vec<u16> {
+    let mut types = Vec::new();
+    if ip.0.is_some() {
+        types.push(TYPE_A);
+    }
+    if ip.1.is_some() {
+        types.push(TYPE_AAAA);
+    }
+    types
 }
 
 pub fn build_address_response(
@@ -379,7 +617,7 @@ pub fn build_address_response(
     let v6 = ip.1.filter(|_| want_aaaa);
 
     if v4.is_none() && v6.is_none() {
-        return nodata(query, params);
+        return nodata(query, params, &address_types(ip));
     }
 
     let Some(mut msg) = Msg::with_question(query, true, RCODE_NOERROR) else {
@@ -391,7 +629,7 @@ pub fn build_address_response(
     if let Some(ip) = v6 {
         msg.add_aaaa(OFFSET_ANCOUNT, Owner::Question, ip);
     }
-    msg.finish(query)
+    msg.finish(query, params)
 }
 
 #[cfg(test)]
@@ -421,6 +659,8 @@ mod tests {
             expire: 604800,
             minimum: 3600,
             spf: Some("v=spf1 -all"),
+            dnssec: None,
+            do_bit: false,
         }
     }
 
