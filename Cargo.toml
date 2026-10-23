@@ -12,4 +12,4 @@ description = "Wildcard DNS for any IP Address"
 log = "0.4"
 env_logger = "0.11"
 p256 = { version = "0.14", features = ["ecdsa", "pem", "pkcs8"] }
-sha2 = "0.10"
+sha2 = "0.11"
