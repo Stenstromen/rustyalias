@@ -1,6 +1,7 @@
 use super::response::{encode_domain_name, question_section_end, TYPE_NSEC, TYPE_RRSIG};
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
+use p256::elliptic_curve::Generate;
 use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey, LineEnding};
 use p256::SecretKey;
 use sha2::{Digest, Sha256};
@@ -27,7 +28,7 @@ pub struct DnssecKey {
 
 impl DnssecKey {
     pub fn from_signing_key(signing_key: SigningKey) -> Self {
-        let point = signing_key.verifying_key().to_encoded_point(false);
+        let point = signing_key.verifying_key().to_sec1_point(false);
         let bytes = point.as_bytes();
         if bytes.first() != Some(&0x04) || bytes.len() != 65 {
             panic!("P-256 verifying key was not an uncompressed point");
@@ -48,7 +49,7 @@ impl DnssecKey {
     }
 
     pub fn generate() -> Self {
-        Self::from_signing_key(SigningKey::random(&mut rand_core::OsRng))
+        Self::from_signing_key(SigningKey::generate())
     }
 
     pub fn from_private_key_str(raw: &str) -> Result<Self, String> {
@@ -389,7 +390,7 @@ mod tests {
 
     #[test]
     fn pem_roundtrip() {
-        let secret = SecretKey::random(&mut rand_core::OsRng);
+        let secret = SecretKey::generate();
         let pem = secret.to_pkcs8_pem(LineEnding::LF).unwrap();
         let key = DnssecKey::from_private_key_str(pem.as_str()).unwrap();
         assert_ne!(key.key_tag, 0);
